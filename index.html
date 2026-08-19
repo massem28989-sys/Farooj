@@ -159,6 +159,7 @@
       </div>
 
       <div class="tabs" id="branchTabsBar"></div>
+      <div class="tabs" id="branchGroupSubTabsBar" style="margin-top:8px;"></div>
 
       <!-- ===== COUNT SUB-VIEW ===== -->
       <div id="countView">
@@ -958,12 +959,12 @@ let adminAccessLevel = 'full'; // 'full' أو 'operation' - بيتحدد وقت 
 
 // نظام تخصيص التبويبات: ترتيب وأسماء قابلة للتغيير من الإعدادات
 let branchTabs = [
-  { id: 'count', label: 'تسجيل جرد فرع' },
-  { id: 'viewMyCount', label: 'عرض الجرد المسجل' },
-  { id: 'waste', label: 'التالف' },
-  { id: 'transfers', label: 'تحويلات بين الفروع' },
-  { id: 'receiveTransfers', label: 'استلام التحويلات' },
-  { id: 'viewMyWaste', label: 'عرض التالف المسجل' }
+  { id: 'count', label: 'تسجيل جرد فرع', group: 'الجرد' },
+  { id: 'viewMyCount', label: 'عرض الجرد المسجل', group: 'الجرد' },
+  { id: 'waste', label: 'تسجيل التالف', group: 'التالف' },
+  { id: 'viewMyWaste', label: 'عرض التالف المسجل', group: 'التالف' },
+  { id: 'transfers', label: 'تحويل جديد', group: 'التحويلات' },
+  { id: 'receiveTransfers', label: 'استلام التحويلات', group: 'التحويلات' }
 ];
 let adminTabs = [
   { id: 'admin', label: 'لوحة الجرد', group: 'Operation' },
@@ -1000,6 +1001,12 @@ async function loadTabConfig() {
       const savedIds = cfg.branchTabs.map(t => t.id);
       const newOnes = branchTabs.filter(t => !savedIds.includes(t.id)); // تبويبات جديدة أُضيفت للكود بعد آخر حفظ
       if (newOnes.length) { cfg.branchTabs = [...cfg.branchTabs, ...newOnes]; changed = true; }
+      cfg.branchTabs.forEach(t => {
+        if (t.group === undefined) {
+          const def = branchTabs.find(d => d.id === t.id);
+          if (def && def.group) { t.group = def.group; changed = true; }
+        }
+      });
       branchTabs = cfg.branchTabs;
     }
     if (cfg.adminTabs) {
@@ -1031,12 +1038,54 @@ async function saveTabConfig() {
 
 let currentAdminGroup = null;
 
+let currentBranchGroup = null;
+
+// يبني قائمة عناصر المستوى الأول: تبويب لوحده (مالوش مجموعة) أو زرار مجموعة واحد يمثل كل التبويبات اللي جواها
+function getBranchTopLevelEntries() {
+  const entries = [];
+  const seenGroups = new Set();
+  branchTabs.forEach(t => {
+    if (t.group) {
+      if (seenGroups.has(t.group)) return;
+      seenGroups.add(t.group);
+      entries.push({ isGroup: true, group: t.group });
+    } else {
+      entries.push({ isGroup: false, tab: t });
+    }
+  });
+  return entries;
+}
+
 function renderBranchTabsBar() {
   const wrap = document.getElementById('branchTabsBar');
-  wrap.innerHTML = branchTabs.map((t, i) => {
-    const btnId = TAB_BUTTON_ID[t.id];
-    return `<button class="tab-btn${i === 0 ? ' active' : ''}" id="${btnId}" onclick="switchTab('${t.id}')">${t.label}</button>`;
+  const entries = getBranchTopLevelEntries();
+  wrap.innerHTML = entries.map((e, i) => {
+    if (e.isGroup) {
+      const isActiveGroup = currentBranchGroup === e.group;
+      return `<button class="tab-btn${i === 0 && !currentBranchGroup ? ' active' : ''}${isActiveGroup ? ' active' : ''}" onclick="openBranchGroup('${e.group.replace(/'/g, "\\'")}')">${e.group} ▾</button>`;
+    }
+    const btnId = TAB_BUTTON_ID[e.tab.id];
+    return `<button class="tab-btn${i === 0 && !currentBranchGroup ? ' active' : ''}" id="${btnId}" onclick="switchTab('${e.tab.id}')">${e.tab.label}</button>`;
   }).join('');
+  renderBranchGroupSubTabsBar();
+}
+
+function renderBranchGroupSubTabsBar() {
+  const wrap = document.getElementById('branchGroupSubTabsBar');
+  if (!wrap) return;
+  if (!currentBranchGroup) { wrap.innerHTML = ''; return; }
+  const tabsInGroup = branchTabs.filter(t => t.group === currentBranchGroup);
+  wrap.innerHTML = tabsInGroup.map(t => {
+    const btnId = TAB_BUTTON_ID[t.id];
+    return `<button class="tab-btn" id="${btnId}_sub" style="font-size:12.5px;" onclick="switchTab('${t.id}')">${t.label}</button>`;
+  }).join('');
+}
+
+function openBranchGroup(groupName) {
+  currentBranchGroup = groupName;
+  renderBranchTabsBar();
+  const firstTab = branchTabs.find(t => t.group === groupName);
+  if (firstTab) switchTab(firstTab.id);
 }
 
 // يبني قائمة عناصر المستوى الأول: تبويب لوحده (مالوش مجموعة) أو زرار مجموعة واحد يمثل كل التبويبات اللي جواها
@@ -1090,20 +1139,21 @@ function renderTabCustomizer() {
   const wrap = document.getElementById('tabCustomizerWrap');
   if (!wrap) return;
 
-  const existingGroups = [...new Set(['Operation', 'Accountant', ...adminTabs.filter(t => t.group).map(t => t.group)])];
+  const existingBranchGroups = [...new Set(['الجرد', 'التالف', 'التحويلات', ...branchTabs.filter(t => t.group).map(t => t.group)])];
+  const existingAdminGroups = [...new Set(['Operation', 'Accountant', ...adminTabs.filter(t => t.group).map(t => t.group)])];
 
-  const buildGroupHtml = (groupName, arr, allowGrouping) => {
+  const buildGroupHtml = (groupName, arr, groupsList) => {
     let html = `<h3 style="font-size:13.5px; margin:14px 0 8px;">${groupName}</h3><table><tbody>`;
     arr.forEach((t, i) => {
       html += `<tr>
         <td style="width:35%;"><input type="text" id="tabLabel_${t.id}" value="${t.label.replace(/"/g, '&quot;')}" style="padding:7px 9px; font-size:13.5px;"></td>
-        ${allowGrouping ? `<td style="width:30%;">
+        <td style="width:30%;">
           <select id="tabGroup_${t.id}" onchange="if(this.value==='__new__'){ const g=prompt('اسم المجموعة الجديدة:'); this.value = g ? g : ''; if(g){ let o=document.createElement('option'); o.value=g; o.textContent=g; o.selected=true; this.insertBefore(o, this.lastElementChild.previousSibling); } }" style="padding:7px 9px; font-size:13px;">
             <option value="" ${!t.group ? 'selected' : ''}>بدون مجموعة (تبويب مستقل)</option>
-            ${existingGroups.map(g => `<option value="${g}" ${t.group === g ? 'selected' : ''}>${g}</option>`).join('')}
+            ${groupsList.map(g => `<option value="${g}" ${t.group === g ? 'selected' : ''}>${g}</option>`).join('')}
             <option value="__new__">+ مجموعة جديدة...</option>
           </select>
-        </td>` : ''}
+        </td>
         <td style="white-space:nowrap;">
           <button class="link-btn" ${i === 0 ? 'disabled style="opacity:.3;"' : ''} onclick="moveTabItem('${groupName === 'الفرع' ? 'branch' : 'admin'}', ${i}, -1)">▲ لأعلى</button>
           <button class="link-btn" ${i === arr.length - 1 ? 'disabled style="opacity:.3;"' : ''} onclick="moveTabItem('${groupName === 'الفرع' ? 'branch' : 'admin'}', ${i}, 1)">▼ لأسفل</button>
@@ -1114,9 +1164,9 @@ function renderTabCustomizer() {
     return html;
   };
 
-  wrap.innerHTML = buildGroupHtml('الفرع', branchTabs, false)
+  wrap.innerHTML = buildGroupHtml('الفرع', branchTabs, existingBranchGroups)
     + '<p class="muted" style="margin-top:14px;">اختار نفس المجموعة لأكتر من تبويب عشان يتجمعوا مع بعض تحت زرار واحد. اختار "بدون مجموعة" لو عايزه يفضل تبويب مستقل.</p>'
-    + buildGroupHtml('الإدارة', adminTabs, true);
+    + buildGroupHtml('الإدارة', adminTabs, existingAdminGroups);
 }
 
 function moveTabItem(group, index, direction) {
@@ -1131,7 +1181,12 @@ function moveTabItem(group, index, direction) {
 
 async function saveTabCustomizer() {
   const hint = document.getElementById('tabCustomizerHint');
-  branchTabs.forEach(t => { const el = document.getElementById(`tabLabel_${t.id}`); if (el) t.label = el.value.trim() || t.label; });
+  branchTabs.forEach(t => {
+    const labelEl = document.getElementById(`tabLabel_${t.id}`);
+    if (labelEl) t.label = labelEl.value.trim() || t.label;
+    const groupEl = document.getElementById(`tabGroup_${t.id}`);
+    if (groupEl) t.group = groupEl.value.trim() || null;
+  });
   adminTabs.forEach(t => {
     const labelEl = document.getElementById(`tabLabel_${t.id}`);
     if (labelEl) t.label = labelEl.value.trim() || t.label;
@@ -1142,6 +1197,7 @@ async function saveTabCustomizer() {
   const ok = await saveTabConfig();
   if (ok) {
     currentAdminGroup = null;
+    currentBranchGroup = null;
     renderBranchTabsBar();
     renderAdminTabsBar();
     hint.textContent = 'تم حفظ ترتيب وأسماء ومجموعات التبويبات بنجاح.'; hint.style.color = '#3B6D11';
@@ -1667,6 +1723,14 @@ function switchTab(tab) {
     renderAdminTabsBar();
   } else if (adminTabs.some(t => t.id === tab) && !(tabDef && tabDef.group)) {
     if (currentAdminGroup !== null) { currentAdminGroup = null; renderAdminTabsBar(); }
+  }
+
+  const branchTabDef = branchTabs.find(t => t.id === tab);
+  if (branchTabDef && branchTabDef.group && currentBranchGroup !== branchTabDef.group) {
+    currentBranchGroup = branchTabDef.group;
+    renderBranchTabsBar();
+  } else if (branchTabs.some(t => t.id === tab) && !(branchTabDef && branchTabDef.group)) {
+    if (currentBranchGroup !== null) { currentBranchGroup = null; renderBranchTabsBar(); }
   }
 
   setDisplay('countView', tab === 'count' ? 'block' : 'none');
