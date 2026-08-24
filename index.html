@@ -387,6 +387,19 @@
 
       <button class="primary" style="width:100%; padding:14px;" onclick="submitFactoryOrder()" id="submitFactoryOrderBtn">إرسال طلبية المصنع</button>
       <div id="factoryOrderToast"></div>
+
+      <div class="card" id="sentFactoryOrderCard" style="display:none;">
+        <h2>طلبية النهاردة المُرسلة</h2>
+        <p class="muted" style="margin-top:-8px;">الطلبية اتبعتت خلاص ومينفعش تبعت تانية لنفس اليوم. لو محتاج تعديل، ابعت طلب للمصنع من تحت.</p>
+        <div id="sentFactoryOrderWrap"></div>
+        <div style="margin-top:14px; border-top:1px solid #E0E0E0; padding-top:14px;">
+          <label>محتاج تعديل؟ اكتب المطلوب بالتفصيل وابعته للمصنع</label>
+          <textarea id="factoryOrderChangeNote" rows="3" placeholder="مثلاً: زوّد كباب دجاج 5 كيلو، وألغِ الطاووق" style="width:100%; padding:10px; font-family:inherit; font-size:13.5px; border:1px solid #E0E0E0; border-radius:8px;"></textarea>
+          <button class="ghost" style="margin-top:10px;" onclick="submitFactoryOrderChangeRequest()">إبلاغ المصنع بطلب التعديل</button>
+          <p class="muted" id="factoryOrderChangeHint" style="margin-top:8px;">&nbsp;</p>
+        </div>
+        <div id="myFactoryChangeRequestsWrap" style="margin-top:14px;"></div>
+      </div>
       </div>
     </div>
   </div>
@@ -581,6 +594,7 @@
         <button class="tab-btn" id="foSubTabReportBtn" onclick="switchFactoryOrdersSubTab('report')">تقرير الفترة (إجمالي المطلوب)</button>
         <button class="tab-btn" id="foSubTabCoreBtn" onclick="switchFactoryOrdersSubTab('core')">اجمالي الفروع</button>
         <button class="tab-btn" id="foSubTabAppetizersBtn" onclick="switchFactoryOrdersSubTab('appetizers')">المقبلات والصوصات</button>
+        <button class="tab-btn" id="foSubTabChangesBtn" onclick="switchFactoryOrdersSubTab('changes')">طلبات تعديل الفروع</button>
       </div>
 
       <div class="card">
@@ -648,6 +662,17 @@
           <h2 style="margin:14px 0 2px;">ورقة المقبلات والصوصات</h2>
           <p class="muted" style="margin:0;">نفس أصناف شيت "مقبلات وصوصات" في الإكسل، لكل فرع في اليوم المحدد</p>
           <div id="appetizerTableWrap" style="margin-top:14px;"><p class="empty">اختار اليوم.</p></div>
+        </div>
+      </div>
+
+      <div id="foChangesSubView" style="display:none;">
+        <div class="card">
+          <div class="row" style="grid-template-columns: 1fr auto; align-items:center; margin-bottom:0;">
+            <h2 style="margin:0;">طلبات تعديل الطلبيات من الفروع</h2>
+            <button class="ghost" onclick="loadFactoryOrderChangeRequests()">تحديث</button>
+          </div>
+          <p class="muted" style="margin-top:8px;">لما فرع يبعت طلبية ويحتاج يعدّلها، الطلب بيوصلك هنا. عدّل الطلبية من "طلبيات الفروع" وبعدين علّم الطلب إنه اتعمل.</p>
+          <div id="factoryChangeRequestsWrap" style="margin-top:12px;"><p class="empty">جاري التحميل...</p></div>
         </div>
       </div>
     </div>
@@ -1022,6 +1047,7 @@
               <option value="inv_count">جرد</option>
               <option value="inv_waste">تالف</option>
               <option value="inv_transfer">تحويلات</option>
+              <option value="inv_factory_order">طلبيات المصنع</option>
               <option value="inv_editrequests">طلبات التعديل</option>
             </select>
           </div>
@@ -2123,6 +2149,19 @@ async function loadDeleteRecordsList() {
         itemCount: '-', totalValue: r.status === 'pending' ? 'محتاج موافقة' : (r.status === 'approved' ? 'تمت الموافقة' : 'مرفوض')
       }));
       lastDeleteRecordsList = rows;
+    } else if (type === 'inv_factory_order') {
+      const listResult = await gsList(`inv_factory_order:${date}:`);
+      const keys = listResult.keys || [];
+      const rows = [];
+      const results = await Promise.all(keys.map(k => gsGet(k).catch(() => null)));
+      results.forEach((res, i) => {
+        if (!res || !res.value) return;
+        try {
+          const data = JSON.parse(res.value);
+          rows.push({ key: keys[i], branch: data.branch, date: data.date, itemCount: (data.items || []).length, totalValue: data.submittedAt ? new Date(data.submittedAt).toLocaleString('ar-EG') : '-' });
+        } catch (e) { /* skip */ }
+      });
+      lastDeleteRecordsList = rows;
     } else if (type === 'inv_transfer') {
       const listResult = await gsList(`inv_transfer:${date}:`);
       const keys = listResult.keys || [];
@@ -2166,15 +2205,15 @@ function renderDeleteRecordsList(type) {
   selectedDeleteRecords.clear();
   if (lastDeleteRecordsList.length === 0) { wrap.innerHTML = '<p class="empty">مفيش سجلات في هذا اليوم.</p>'; return; }
 
-  const typeLabels = { inv_count: 'الجرد', inv_waste: 'التالف', inv_transfer: 'التحويل', inv_editrequests: 'طلب التعديل' };
+  const typeLabels = { inv_count: 'الجرد', inv_waste: 'التالف', inv_transfer: 'التحويل', inv_factory_order: 'طلبية المصنع', inv_editrequests: 'طلب التعديل' };
   const typeLabel = typeLabels[type] || 'السجل';
   const branchColLabel = type === 'inv_transfer' ? 'من ← إلى' : (type === 'inv_editrequests' ? 'الفرع (القائم بالتعديل)' : 'الفرع');
-  const lastColLabel = type === 'inv_editrequests' ? 'الحالة' : 'القيمة';
+  const lastColLabel = type === 'inv_editrequests' ? 'الحالة' : (type === 'inv_factory_order' ? 'وقت الإرسال' : 'القيمة');
 
   let html = `<div id="bulkDeleteBarWrap"></div>`;
   html += `<table><thead><tr><th><input type="checkbox" onchange="toggleSelectAllDeleteRecords(this.checked)"></th><th>${branchColLabel}</th><th>التاريخ</th><th>عدد الأصناف</th><th>${lastColLabel}</th><th></th></tr></thead><tbody>`;
   lastDeleteRecordsList.forEach((r, idx) => {
-    const lastCol = type === 'inv_editrequests' ? r.totalValue : Math.round((r.totalValue || 0) * 100) / 100;
+    const lastCol = (type === 'inv_editrequests' || type === 'inv_factory_order') ? r.totalValue : Math.round((r.totalValue || 0) * 100) / 100;
     html += `<tr>
       <td><input type="checkbox" onchange="toggleSelectDeleteRecord(${idx}, this.checked)"></td>
       <td>${r.branch}</td><td>${r.date}</td><td class="num">${r.itemCount}</td><td class="num">${lastCol}</td>
@@ -2188,7 +2227,7 @@ function renderDeleteRecordsList(type) {
 function toggleSelectDeleteRecord(idx, checked) {
   if (checked) selectedDeleteRecords.add(idx); else selectedDeleteRecords.delete(idx);
   const type = document.getElementById('deleteRecordType').value;
-  const typeLabels = { inv_count: 'الجرد', inv_waste: 'التالف', inv_transfer: 'التحويل', inv_editrequests: 'طلب التعديل' };
+  const typeLabels = { inv_count: 'الجرد', inv_waste: 'التالف', inv_transfer: 'التحويل', inv_factory_order: 'طلبية المصنع', inv_editrequests: 'طلب التعديل' };
   renderBulkDeleteBar(typeLabels[type] || 'السجل');
 }
 
@@ -2197,7 +2236,7 @@ function toggleSelectAllDeleteRecords(checked) {
   if (checked) lastDeleteRecordsList.forEach((r, idx) => selectedDeleteRecords.add(idx));
   document.querySelectorAll('#deleteRecordsListWrap tbody input[type="checkbox"]').forEach(cb => cb.checked = checked);
   const type = document.getElementById('deleteRecordType').value;
-  const typeLabels = { inv_count: 'الجرد', inv_waste: 'التالف', inv_transfer: 'التحويل', inv_editrequests: 'طلب التعديل' };
+  const typeLabels = { inv_count: 'الجرد', inv_waste: 'التالف', inv_transfer: 'التحويل', inv_factory_order: 'طلبية المصنع', inv_editrequests: 'طلب التعديل' };
   renderBulkDeleteBar(typeLabels[type] || 'السجل');
 }
 
@@ -3519,6 +3558,78 @@ function renderFactoryOrderGate() {
   renderFactoryOrderCategoryChips();
   renderFactoryOrderItemPicker();
   renderFactoryOrderItems();
+  loadSentFactoryOrder();
+}
+
+// بيوري الفرع طلبية النهاردة لو كان بعتها بالفعل، مع إمكانية إبلاغ المصنع بأي تعديل مطلوب
+async function loadSentFactoryOrder() {
+  if (!currentUser) return;
+  const card = document.getElementById('sentFactoryOrderCard');
+  const wrap = document.getElementById('sentFactoryOrderWrap');
+  const date = todayStr();
+  const key = `inv_factory_order:${date}:${slugify(currentUser.branch)}`;
+  try {
+    const res = await gsGet(key);
+    if (!res || !res.value) { card.style.display = 'none'; return; }
+    const data = JSON.parse(res.value);
+    let html = `<p class="muted">وقت الإرسال: ${data.submittedAt ? new Date(data.submittedAt).toLocaleString('ar-EG') : '-'}</p>`;
+    html += '<div class="table-scroll"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th></tr></thead><tbody>';
+    (data.items || []).forEach(it => { html += `<tr><td>${it.name}</td><td class="num">${it.qty}</td><td>${it.unit}</td></tr>`; });
+    html += '</tbody></table></div>';
+    wrap.innerHTML = html;
+    card.style.display = 'block';
+    loadMyFactoryChangeRequests();
+  } catch (e) { card.style.display = 'none'; }
+}
+
+async function submitFactoryOrderChangeRequest() {
+  if (!currentUser) return;
+  const noteEl = document.getElementById('factoryOrderChangeNote');
+  const hint = document.getElementById('factoryOrderChangeHint');
+  const note = noteEl.value.trim();
+  if (!note) { hint.textContent = 'اكتب التعديل المطلوب الأول.'; hint.style.color = '#A32D2D'; return; }
+
+  const date = todayStr();
+  const id = Date.now();
+  const req = { id, branch: currentUser.branch, date, note, requestedBy: currentUser.username, status: 'pending', createdAt: new Date().toISOString() };
+
+  try {
+    const ok1 = await gsSet(`inv_factory_order_change:${id}`, JSON.stringify(req));
+    if (!ok1) throw new Error();
+    // فهرس خفيف عشان المصنع يقراه بسرعة
+    let index = [];
+    try {
+      const res = await gsGet('inv_factory_order_change:index');
+      index = (res && res.value) ? JSON.parse(res.value) : [];
+    } catch (e) { index = []; }
+    index.push({ id, branch: req.branch, date, requestedBy: req.requestedBy, status: 'pending', createdAt: req.createdAt });
+    await gsSet('inv_factory_order_change:index', JSON.stringify(index));
+
+    noteEl.value = '';
+    hint.textContent = 'تم إبلاغ المصنع بطلب التعديل، هيظهرلهم في لوحة طلبيات المصنع.'; hint.style.color = '#3B6D11';
+    loadMyFactoryChangeRequests();
+  } catch (e) {
+    hint.textContent = 'حصل خطأ أثناء الإرسال، حاول تاني.'; hint.style.color = '#A32D2D';
+  }
+}
+
+async function loadMyFactoryChangeRequests() {
+  if (!currentUser) return;
+  const wrap = document.getElementById('myFactoryChangeRequestsWrap');
+  if (!wrap) return;
+  try {
+    const res = await gsGet('inv_factory_order_change:index');
+    const index = (res && res.value) ? JSON.parse(res.value) : [];
+    const mine = index.filter(r => r.branch === currentUser.branch && r.date === todayStr());
+    if (mine.length === 0) { wrap.innerHTML = ''; return; }
+    const labels = { pending: 'مستلم عند المصنع', done: 'المصنع عدّلها', rejected: 'المصنع رفضها' };
+    let html = '<p class="muted" style="margin:0 0 6px;">طلبات التعديل اللي بعتها النهاردة:</p>';
+    mine.forEach(r => {
+      const cls = r.status === 'done' ? 'status-yes' : 'status-no';
+      html += `<div style="font-size:12.5px; margin-bottom:4px;"><span class="status-pill ${cls}">${labels[r.status] || r.status}</span> <span class="muted">${new Date(r.createdAt).toLocaleString('ar-EG')}</span></div>`;
+    });
+    wrap.innerHTML = html;
+  } catch (e) { wrap.innerHTML = ''; }
 }
 
 function renderFactoryOrderCategoryChips() {
@@ -3702,6 +3813,7 @@ async function submitFactoryOrder() {
       currentFactoryOrderItems = [];
       renderFactoryOrderItems();
       renderFactoryOrderItemPicker();
+      loadSentFactoryOrder();
     } else {
       toast.innerHTML = '<div class="toast err">حصل خطأ أثناء الإرسال، حاول تاني.</div>';
     }
@@ -4591,6 +4703,68 @@ function renderFactoryOrdersAdminGate() {
   }
 }
 
+let lastFactoryChangeIndex = [];
+
+async function loadFactoryOrderChangeRequests() {
+  const wrap = document.getElementById('factoryChangeRequestsWrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<p class="empty">جاري التحميل...</p>';
+  try {
+    const res = await gsGet('inv_factory_order_change:index');
+    lastFactoryChangeIndex = (res && res.value) ? JSON.parse(res.value) : [];
+  } catch (e) { lastFactoryChangeIndex = []; }
+
+  if (lastFactoryChangeIndex.length === 0) { wrap.innerHTML = '<p class="empty">مفيش طلبات تعديل من الفروع.</p>'; return; }
+
+  const sorted = [...lastFactoryChangeIndex].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const details = await Promise.all(sorted.map(r => gsGet(`inv_factory_order_change:${r.id}`).catch(() => null)));
+
+  const labels = { pending: 'محتاج تعديل', done: 'اتعمل', rejected: 'مرفوض' };
+  let html = '<div class="table-scroll"><table><thead><tr><th>الفرع</th><th>التاريخ</th><th>التعديل المطلوب</th><th>بواسطة</th><th>الحالة</th><th></th></tr></thead><tbody>';
+  sorted.forEach((r, i) => {
+    let note = '-';
+    try { if (details[i] && details[i].value) note = JSON.parse(details[i].value).note || '-'; } catch (e) {}
+    const cls = r.status === 'done' ? 'status-yes' : 'status-no';
+    html += `<tr>
+      <td>${r.branch}</td>
+      <td>${r.date}</td>
+      <td style="max-width:320px; white-space:normal;">${note}</td>
+      <td>${r.requestedBy || '-'}</td>
+      <td><span class="status-pill ${cls}">${labels[r.status] || r.status}</span></td>
+      <td style="white-space:nowrap;">${r.status === 'pending' ? `
+        <button class="link-btn" onclick="decideFactoryChangeRequest(${r.id}, 'done')">علّم إنه اتعمل</button>
+        <button class="link-btn" style="color:#A32D2D;" onclick="decideFactoryChangeRequest(${r.id}, 'rejected')">رفض</button>` : ''}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  wrap.innerHTML = html;
+}
+
+async function decideFactoryChangeRequest(id, decision) {
+  try {
+    const res = await gsGet('inv_factory_order_change:index');
+    let index = (res && res.value) ? JSON.parse(res.value) : [];
+    const idx = index.findIndex(r => r.id === id);
+    if (idx === -1) return;
+    index[idx].status = decision;
+    const ok = await gsSet('inv_factory_order_change:index', JSON.stringify(index));
+    if (!ok) throw new Error();
+    // نحدّث السجل الكامل كمان عشان الفرع يشوف الحالة الجديدة
+    try {
+      const full = await gsGet(`inv_factory_order_change:${id}`);
+      if (full && full.value) {
+        const obj = JSON.parse(full.value);
+        obj.status = decision;
+        await gsSet(`inv_factory_order_change:${id}`, JSON.stringify(obj));
+      }
+    } catch (e) {}
+    logActivity(decision === 'done' ? 'تنفيذ طلب تعديل طلبية' : 'رفض طلب تعديل طلبية', `${index[idx].branch} — ${index[idx].date}`);
+    loadFactoryOrderChangeRequests();
+  } catch (e) {
+    alert('حصل خطأ أثناء تحديث الحالة، حاول تاني.');
+  }
+}
+
 function switchFactoryOrdersSubTab(sub) {
   factoryOrdersSubTab = sub;
   document.getElementById('foSubTabOverviewBtn').classList.toggle('active', sub === 'overview');
@@ -4601,6 +4775,9 @@ function switchFactoryOrdersSubTab(sub) {
   document.getElementById('foReportSubView').style.display = sub === 'report' ? 'block' : 'none';
   document.getElementById('foCoreSubView').style.display = sub === 'core' ? 'block' : 'none';
   document.getElementById('foAppetizersSubView').style.display = sub === 'appetizers' ? 'block' : 'none';
+  document.getElementById('foSubTabChangesBtn').classList.toggle('active', sub === 'changes');
+  document.getElementById('foChangesSubView').style.display = sub === 'changes' ? 'block' : 'none';
+  if (sub === 'changes') loadFactoryOrderChangeRequests();
   if (sub === 'report') renderFactoryOrdersReport();
   if (sub === 'core') {
     if (!document.getElementById('foCoreDate').value) document.getElementById('foCoreDate').value = todayStr();
