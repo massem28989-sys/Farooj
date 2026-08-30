@@ -356,6 +356,36 @@
         </div>
       </div>
 
+      <!-- ===== PRINT BLANK SHEET SUB-VIEW ===== -->
+      <div id="printBlankView" style="display:none;">
+        <div class="card">
+          <h2>طباعة ورقة جرد فارغة</h2>
+          <p class="muted" style="margin-top:-8px;">ورقة منظمة بالتصنيفات، تطبعها وتاخدها معاك تعد بالقلم، وبعدين تدخّل الأرقام على النظام.</p>
+          <label>التصنيفات اللي هتظهر في الورقة وترتيبها</label>
+          <p class="muted" style="margin:4px 0 8px; font-size:12.5px;">شيل علامة الصح عن أي تصنيف مش عايزه، واستخدم ▲▼ لترتيبهم زي ما بتعد في الفرع بالظبط. الإعدادات بتتحفظ تلقائي.</p>
+          <div id="printBlankCategoryChipsWrap"></div>
+          <div class="row" style="grid-template-columns: 1fr 1fr; margin-top:10px;">
+            <div>
+              <label>عدد الخانات الفاضية لكل صنف</label>
+              <select id="printBlankCols">
+                <option value="1">خانة واحدة (الكمية)</option>
+                <option value="2" selected>خانتين (ثلاجة / مخزن)</option>
+                <option value="3">3 خانات</option>
+              </select>
+            </div>
+            <div>
+              <label>حجم الخط</label>
+              <select id="printBlankFont">
+                <option value="11">صغير (أصناف أكتر في الصفحة)</option>
+                <option value="12.5" selected>متوسط</option>
+                <option value="14">كبير (أوضح للقراءة)</option>
+              </select>
+            </div>
+          </div>
+          <button class="primary" style="width:100%; margin-top:14px; padding:14px;" onclick="printBlankInventorySheet()">🖨️ طباعة الورقة</button>
+        </div>
+      </div>
+
       <!-- ===== FACTORY ORDER SUB-VIEW ===== -->
       <div id="factoryOrderView" style="display:none;">
         <div class="card">
@@ -1112,6 +1142,7 @@ let adminAccessLevel = 'full'; // 'full' أو 'operation' - بيتحدد وقت 
 let branchTabs = [
   { id: 'count', label: 'تسجيل جرد فرع', group: 'الجرد' },
   { id: 'viewMyCount', label: 'عرض الجرد المسجل', group: 'الجرد' },
+  { id: 'printBlank', label: 'طباعة ورقة جرد', group: 'الجرد' },
   { id: 'waste', label: 'تسجيل التالف', group: 'التالف' },
   { id: 'viewMyWaste', label: 'عرض التالف المسجل', group: 'التالف' },
   { id: 'transfers', label: 'تحويل جديد', group: 'التحويلات' },
@@ -1132,7 +1163,7 @@ let adminTabs = [
   { id: 'deleteRecords', label: 'حذف السجلات', group: 'Accountant' }
 ];
 const TAB_BUTTON_ID = {
-  count: 'tabCountBtn', viewMyCount: 'tabViewMyCountBtn', waste: 'tabWasteBtn', transfers: 'tabTransfersBtn', receiveTransfers: 'tabReceiveTransfersBtn', viewMyWaste: 'tabViewMyWasteBtn', factoryOrder: 'tabFactoryOrderBtn',
+  count: 'tabCountBtn', viewMyCount: 'tabViewMyCountBtn', printBlank: 'tabPrintBlankBtn', waste: 'tabWasteBtn', transfers: 'tabTransfersBtn', receiveTransfers: 'tabReceiveTransfersBtn', viewMyWaste: 'tabViewMyWasteBtn', factoryOrder: 'tabFactoryOrderBtn',
   admin: 'tabAdminBtn', editRequests: 'tabEditRequestsBtn', wasteAdmin: 'tabWasteAdminBtn', transfersAdmin: 'tabTransfersAdminBtn', manage: 'tabManageBtn', factoryOrdersAdmin: 'tabFactoryOrdersAdminBtn',
   users: 'tabUsersBtn', settings: 'tabSettingsBtn', cost: 'tabCostBtn',
   newItems: 'tabNewItemsBtn', deleteRecords: 'tabDeleteRecordsBtn'
@@ -1889,6 +1920,7 @@ function switchTab(tab) {
   setDisplay('countView', tab === 'count' ? 'block' : 'none');
   setDisplay('viewMyCountView', tab === 'viewMyCount' ? 'block' : 'none');
   setDisplay('viewMyWasteView', tab === 'viewMyWaste' ? 'block' : 'none');
+  setDisplay('printBlankView', tab === 'printBlank' ? 'block' : 'none');
   setDisplay('factoryOrderView', tab === 'factoryOrder' ? 'block' : 'none');
   setDisplay('factoryOrdersAdminView', tab === 'factoryOrdersAdmin' ? 'block' : 'none');
   setDisplay('wasteView', tab === 'waste' ? 'block' : 'none');
@@ -1908,6 +1940,7 @@ function switchTab(tab) {
   toggleActive('tabCountBtn', tab === 'count');
   toggleActive('tabViewMyCountBtn', tab === 'viewMyCount');
   toggleActive('tabViewMyWasteBtn', tab === 'viewMyWaste');
+  toggleActive('tabPrintBlankBtn', tab === 'printBlank');
   toggleActive('tabFactoryOrderBtn', tab === 'factoryOrder');
   toggleActive('tabFactoryOrdersAdminBtn', tab === 'factoryOrdersAdmin');
   toggleActive('tabWasteBtn', tab === 'waste');
@@ -1926,6 +1959,7 @@ function switchTab(tab) {
   toggleActive('tabDeleteRecordsBtn', tab === 'deleteRecords');
   if (tab === 'viewMyCount') renderViewMyCountGate();
   if (tab === 'viewMyWaste') renderViewMyWasteGate();
+  if (tab === 'printBlank') renderPrintBlankCategoryChips();
   if (tab === 'factoryOrder') renderFactoryOrderGate();
   if (tab === 'factoryOrdersAdmin') renderFactoryOrdersAdminGate();
   if (tab === 'waste') renderWasteGate();
@@ -3939,69 +3973,175 @@ async function confirmTransferReceipt(key) {
   }
 }
 
-let printBlankCategoryFilter = 'الكل';
+let printBlankCategoryFilter = 'الكل'; // للتوافق مع الكود القديم
+let printSheetCats = null; // [{name, on}] بترتيب مخصص — بيتحفظ في الإعدادات
+
+// بيبني القائمة من التصنيفات الحالية، ويحافظ على ترتيبك واختيارك المحفوظ
+function ensurePrintSheetCats() {
+  const all = CATEGORIES_TREE.map(m => m.name);
+  if (!Array.isArray(printSheetCats)) printSheetCats = [];
+  // نشيل أي تصنيف اتمسح من النظام
+  printSheetCats = printSheetCats.filter(c => all.includes(c.name));
+  // نضيف أي تصنيف جديد اتضاف بعد آخر حفظ (مفعّل افتراضيًا)
+  all.forEach(n => { if (!printSheetCats.some(c => c.name === n)) printSheetCats.push({ name: n, on: true }); });
+  return printSheetCats;
+}
 
 function renderPrintBlankCategoryChips() {
   const wrap = document.getElementById('printBlankCategoryChipsWrap');
   if (!wrap) return;
-  wrap.innerHTML = '';
-  const allBtn = document.createElement('button');
-  allBtn.type = 'button';
-  allBtn.className = 'chip-btn' + (printBlankCategoryFilter === 'الكل' ? ' active' : '');
-  allBtn.textContent = 'الكل';
-  allBtn.onclick = () => { printBlankCategoryFilter = 'الكل'; renderPrintBlankCategoryChips(); };
-  wrap.appendChild(allBtn);
-  CATEGORIES_TREE.forEach(m => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'chip-btn' + (m.name === printBlankCategoryFilter ? ' active' : '');
-    btn.textContent = m.name;
-    btn.onclick = () => { printBlankCategoryFilter = m.name; renderPrintBlankCategoryChips(); };
-    wrap.appendChild(btn);
+  const cats = ensurePrintSheetCats();
+  const onCount = cats.filter(c => c.on).length;
+
+  let html = `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+    <button class="ghost" onclick="printSheetSetAll(true)">تحديد الكل</button>
+    <button class="ghost" onclick="printSheetSetAll(false)">إلغاء الكل</button>
+    <span class="muted" style="font-size:12.5px;">${onCount} من ${cats.length} تصنيف هيظهر في الورقة</span>
+  </div>`;
+
+  html += '<div style="border:1px solid #E0E0E0; border-radius:10px; overflow:hidden;">';
+  cats.forEach((c, i) => {
+    html += `<div style="display:flex; align-items:center; gap:8px; padding:8px 10px; ${i ? 'border-top:1px solid #EEE;' : ''} ${c.on ? '' : 'opacity:.5;'}">
+      <input type="checkbox" ${c.on ? 'checked' : ''} onchange="printSheetToggle(${i}, this.checked)" style="width:16px;height:16px;">
+      <span style="flex:1; font-size:13.5px; font-weight:${c.on ? '600' : '400'};">${c.name}</span>
+      <button class="icon-btn" style="width:30px;height:30px;" ${i === 0 ? 'disabled style="opacity:.25;width:30px;height:30px;"' : ''} onclick="printSheetMove(${i}, -1)" aria-label="لأعلى">▲</button>
+      <button class="icon-btn" style="width:30px;height:30px;" ${i === cats.length - 1 ? 'disabled style="opacity:.25;width:30px;height:30px;"' : ''} onclick="printSheetMove(${i}, 1)" aria-label="لأسفل">▼</button>
+    </div>`;
   });
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+function printSheetToggle(i, on) { ensurePrintSheetCats()[i].on = on; savePrintSheetCats(); renderPrintBlankCategoryChips(); }
+function printSheetSetAll(on) { ensurePrintSheetCats().forEach(c => c.on = on); savePrintSheetCats(); renderPrintBlankCategoryChips(); }
+function printSheetMove(i, dir) {
+  const cats = ensurePrintSheetCats();
+  const j = i + dir;
+  if (j < 0 || j >= cats.length) return;
+  [cats[i], cats[j]] = [cats[j], cats[i]];
+  savePrintSheetCats();
+  renderPrintBlankCategoryChips();
+}
+async function savePrintSheetCats() {
+  try { await gsSet('inv_settings:printSheetCats', JSON.stringify(printSheetCats)); } catch (e) { /* الترتيب هيفضل شغال في الجلسة دي على الأقل */ }
+}
+async function loadPrintSheetCats() {
+  try {
+    const res = await gsGet('inv_settings:printSheetCats');
+    if (res && res.value) printSheetCats = JSON.parse(res.value);
+  } catch (e) { printSheetCats = null; }
 }
 
 function printBlankInventorySheet() {
   const printArea = document.getElementById('printArea');
-  const filtered = printBlankCategoryFilter === 'الكل'
-    ? inventoryItems
-    : inventoryItems.filter(it => categoryMatchesFilter(it.category, printBlankCategoryFilter, 'الكل'));
+  const colsN = +(document.getElementById('printBlankCols')||{value:2}).value || 2;
+  const fontSz = (document.getElementById('printBlankFont')||{value:'12.5'}).value || '12.5';
 
-  if (filtered.length === 0) { alert('مفيش أصناف مطابقة للتصنيف ده.'); return; }
+  const catsCfg = ensurePrintSheetCats();
+  const onNames = catsCfg.filter(c => c.on).map(c => c.name);
+  if (!onNames.length) { alert('اختار تصنيف واحد على الأقل عشان يظهر في الورقة.'); return; }
 
-  const sorted = [...filtered].sort((a, b) => (a.category || '').localeCompare(b.category || '', 'ar') || a.name.localeCompare(b.name, 'ar'));
+  const filtered = inventoryItems.filter(it => onNames.includes(getMainCategoryOf(it.category || 'أخرى')));
+  if (filtered.length === 0) { alert('مفيش أصناف في التصنيفات المختارة.'); return; }
 
-  let rows = '';
-  sorted.forEach((it, i) => {
-    rows += `<tr>
-      <td style="padding:7px;border-bottom:1px solid #ddd;">${i + 1}</td>
-      <td style="padding:7px;border-bottom:1px solid #ddd;">${it.name}</td>
-      <td style="padding:7px;border-bottom:1px solid #ddd;text-align:center;">${it.code || '-'}</td>
-      <td style="padding:7px;border-bottom:1px solid #ddd;text-align:center;">${it.unit}</td>
-      <td style="padding:7px;border-bottom:1px solid #ddd;text-align:center; width:90px;"></td>
-    </tr>`;
+  // تجميع بالتصنيف الرئيسي ثم الفرعي، عشان الورقة تبقى مرتبة زي شاشة الجرد بالظبط
+  const groups = {};
+  filtered.forEach(it => {
+    const cat = it.category || 'أخرى';
+    const main = getMainCategoryOf(cat);
+    if (!groups[main]) { groups[main] = { direct: [], subs: {}, orderedSubs: [] }; }
+    const g = groups[main];
+    if (cat === main) g.direct.push(it);
+    else { if (!g.subs[cat]) { g.subs[cat] = []; g.orderedSubs.push(cat); } g.subs[cat].push(it); }
+  });
+  // الترتيب بيتبع ترتيبك المخصص في شاشة التحكم بالظبط
+  const order = onNames.filter(n => groups[n]);
+
+  const colHeads = colsN === 1 ? ['الكمية']
+                 : colsN === 2 ? ['ثلاجة', 'مخزن']
+                 : ['ثلاجة', 'مخزن', 'أخرى'];
+  const emptyCells = colHeads.map(() => `<td class="qty"></td>`).join('');
+  const headCells  = colHeads.map(h => `<th class="qtyh">${h}</th>`).join('');
+
+  let n = 0;
+  const rowsFor = (arr) => arr
+    .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
+    .map(it => { n++; return `<tr>
+      <td class="num">${n}</td>
+      <td class="nm">${it.name}</td>
+      <td class="un">${it.unit || ''}</td>
+      ${emptyCells}
+    </tr>`; }).join('');
+
+  let body = '';
+  order.forEach(main => {
+    const g = groups[main];
+    const count = g.direct.length + Object.values(g.subs).reduce((s, a) => s + a.length, 0);
+    body += `<tr class="cat"><td colspan="${3 + colsN}">${main} <span class="cnt">(${count} صنف)</span></td></tr>`;
+    if (g.direct.length) body += rowsFor(g.direct);
+    g.orderedSubs.forEach(sub => {
+      body += `<tr class="sub"><td colspan="${3 + colsN}">↳ ${sub}</td></tr>`;
+      body += rowsFor(g.subs[sub]);
+    });
   });
 
+  const today = new Date().toLocaleDateString('ar-EG');
+
   printArea.innerHTML = `
-    <div style="font-family:'Cairo',sans-serif; direction:rtl;">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #333; padding-bottom:12px; margin-bottom:16px;">
-        <div><h2 style="margin:0;">ورقة جرد فارغة</h2><p style="margin:4px 0 0; color:#555;">Farooj Abu Alabd System</p></div>
-        <div style="text-align:left;">
-          <p style="margin:0;"><b>الفرع:</b> _______________</p>
-          <p style="margin:0;"><b>التاريخ:</b> _______________</p>
-          <p style="margin:0;"><b>القائم بالجرد:</b> _______________</p>
+    <style>
+      @page { size: A4; margin: 12mm 10mm; }
+      .sheet { font-family:'Cairo',sans-serif; direction:rtl; font-size:${fontSz}px; color:#000; }
+      .sheet .hdr { display:flex; justify-content:space-between; align-items:flex-start;
+                    border-bottom:2px solid #7A1010; padding-bottom:8px; margin-bottom:10px; }
+      .sheet .hdr h2 { margin:0; font-size:${+fontSz + 6}px; color:#7A1010; }
+      .sheet .hdr .sys { margin:2px 0 0; color:#666; font-size:${+fontSz - 2}px; }
+      .sheet .meta { text-align:left; font-size:${+fontSz - 0.5}px; line-height:1.9; }
+      .sheet table { width:100%; border-collapse:collapse; }
+      .sheet thead th { background:#F2EDE7; border:1px solid #999; padding:5px 6px;
+                        font-size:${+fontSz - 1}px; text-align:center; }
+      .sheet thead th.nmh { text-align:right; }
+      .sheet td { border:1px solid #bbb; padding:4px 6px; }
+      .sheet td.num { width:32px; text-align:center; color:#666; }
+      .sheet td.nm  { text-align:right; }
+      .sheet td.un  { width:60px; text-align:center; color:#555; font-size:${+fontSz - 1.5}px; }
+      .sheet td.qty { width:${colsN === 1 ? 90 : colsN === 2 ? 70 : 58}px; height:22px; background:#fff; }
+      .sheet tr.cat td { background:#7A1010; color:#fff; font-weight:700; padding:5px 8px;
+                         font-size:${+fontSz}px; border:1px solid #7A1010; }
+      .sheet tr.cat .cnt { font-weight:400; opacity:.85; font-size:${+fontSz - 2}px; }
+      .sheet tr.sub td { background:#EFE7DF; font-weight:600; padding:3px 8px;
+                         font-size:${+fontSz - 1}px; }
+      .sheet tr { page-break-inside:avoid; }
+      .sheet thead { display:table-header-group; }
+      .sheet .foot { margin-top:14px; display:flex; justify-content:space-between;
+                     font-size:${+fontSz - 0.5}px; padding-top:10px; border-top:1px dashed #999; }
+      .sheet .sign { text-align:center; width:45%; }
+      .sheet .sign .line { border-top:1px solid #000; margin:26px 10px 4px; }
+    </style>
+    <div class="sheet">
+      <div class="hdr">
+        <div>
+          <h2>ورقة جرد فارغة</h2>
+          <p class="sys">Farooj Abu Alabd System${onNames.length < catsCfg.length ? ' — ' + onNames.join(' · ') : ''}</p>
+        </div>
+        <div class="meta">
+          <div><b>الفرع:</b> ______________________</div>
+          <div><b>التاريخ:</b> ____________ (${today})</div>
+          <div><b>القائم بالجرد:</b> ______________</div>
         </div>
       </div>
-      <table style="width:100%; border-collapse:collapse;">
+      <table>
         <thead><tr>
-          <th style="padding:7px;border-bottom:2px solid #333;text-align:right;">#</th>
-          <th style="padding:7px;border-bottom:2px solid #333;text-align:right;">الصنف</th>
-          <th style="padding:7px;border-bottom:2px solid #333;text-align:center;">الكود</th>
-          <th style="padding:7px;border-bottom:2px solid #333;text-align:center;">الوحدة</th>
-          <th style="padding:7px;border-bottom:2px solid #333;text-align:center;">الكمية</th>
+          <th style="width:32px;">#</th>
+          <th class="nmh">الصنف</th>
+          <th style="width:60px;">الوحدة</th>
+          ${headCells}
         </tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${body}</tbody>
       </table>
+      <div class="foot">
+        <div class="sign"><div class="line"></div>توقيع القائم بالجرد</div>
+        <div class="sign"><div class="line"></div>توقيع مدير الفرع</div>
+      </div>
     </div>
   `;
   window.print();
@@ -6532,7 +6672,7 @@ function exportBranchToExcel() {
 }
 
 async function init() {
-  await Promise.all([loadSettings(), loadOperationUsers(), loadCategories(), loadInventoryCatalog(), loadBranches(), loadUsers()]);
+  await Promise.all([loadSettings(), loadOperationUsers(), loadCategories(), loadInventoryCatalog(), loadBranches(), loadUsers(), loadPrintSheetCats()]);
   await loadTabConfig();
   renderBranchTabsBar();
   renderAdminTabsBar();
