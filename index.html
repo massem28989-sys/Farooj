@@ -2218,7 +2218,10 @@ async function loadDeleteRecordsList() {
         if (!res || !res.value) return;
         try {
           const data = JSON.parse(res.value);
-          rows.push({ key: keys[i], branch: data.branch, date: data.date, itemCount: (data.items || []).length, totalValue: data.totalValue || 0 });
+          // نفس الإنقاذ: لو الحقول ناقصة، نستخرجها من المفتاح عشان السجل يظهر ويقدر يتحذف
+          const parts = String(keys[i]).split(':');
+          const bName = data.branch || (parts[2] ? ((BRANCHES.find(b => slugify(b.name) === parts[2]) || {}).name || parts[2].replace(/_/g, ' ')) : '—');
+          rows.push({ key: keys[i], branch: bName, date: data.date || parts[1] || '—', itemCount: (data.items || []).length, totalValue: data.totalValue || 0 });
         } catch (e) { /* skip */ }
       });
       lastDeleteRecordsList = rows;
@@ -5962,10 +5965,22 @@ async function loadAdminView() {
     const listResult = await gsList(`inv_count:${date}:`);
     const keys = listResult.keys || [];
     const results = await Promise.all(keys.map(k => gsGet(k).catch(() => null)));
-    results.forEach(res => {
+    results.forEach((res, i) => {
       if (!res || !res.value) return;
       try {
         const data = JSON.parse(res.value);
+        // إنقاذ السجلات الناقصة: لو الحقول مفقودة لأي سبب، نستخرجها من المفتاح نفسه
+        // (شكل المفتاح: inv_count:التاريخ:اسم-الفرع) عشان مايختفيش أي جرد اتبعت فعلاً
+        if (!data.date || !data.branch) {
+          const parts = String(keys[i]).split(':');
+          if (!data.date && parts[1]) data.date = parts[1];
+          if (!data.branch && parts[2]) {
+            const slug = parts[2];
+            const match = BRANCHES.find(b => slugify(b.name) === slug);
+            data.branch = match ? match.name : slug.replace(/_/g, ' ');
+          }
+        }
+        if (!data.branch) return; // لو لسه مش عارفينه، منقدرش نعرضه
         if (adminAccessLevel === 'operation' && currentOperationUser && !currentOperationUser.branches.includes(data.branch)) return; // Operation بيشوف فروعه المسموحة بس
         submitted[data.branch] = data;
       } catch (e) { /* skip */ }
