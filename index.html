@@ -522,6 +522,22 @@
     </div>
 
     <div id="editRequestsContent" style="display:none;">
+      <div class="card" id="directEditCard">
+        <h2 style="margin:0;">تعديل مباشر لجرد مُرسل</h2>
+        <p class="muted" style="margin-top:8px;">لتصحيح غلطة (زي سعر قديم) بنفسك على طول، من غير ما تستنى طلب من الفرع.</p>
+        <div class="row" style="grid-template-columns: 1fr 1fr auto; align-items:end;">
+          <div>
+            <label>الفرع</label>
+            <select id="directEditBranch"></select>
+          </div>
+          <div>
+            <label>التاريخ</label>
+            <input type="date" id="directEditDate">
+          </div>
+          <button class="ghost" onclick="loadDirectEditRecord()">تحميل الجرد</button>
+        </div>
+        <div id="directEditWrap"></div>
+      </div>
       <div class="card" id="editRequestsCard">
         <div class="row" style="grid-template-columns: 1fr auto; align-items:center; margin-bottom:0;">
           <h2 style="margin:0;">طلبات تعديل الجرد (محتاجة موافقة)</h2>
@@ -4156,10 +4172,95 @@ function renderEditRequestsGate() {
   if (editRequestsUnlocked) {
     document.getElementById('editRequestsLockCard').style.display = 'none';
     document.getElementById('editRequestsContent').style.display = 'block';
+    const branchSel = document.getElementById('directEditBranch');
+    if (branchSel && !branchSel.dataset.filled) {
+      branchSel.innerHTML = '<option value="">اختار الفرع</option>' + BRANCHES.map(b => `<option value="${b.name}">${b.name}</option>`).join('');
+      branchSel.dataset.filled = '1';
+    }
+    const dateEl = document.getElementById('directEditDate');
+    if (dateEl && !dateEl.value) dateEl.value = todayStr();
     loadEditRequests();
   } else {
     document.getElementById('editRequestsLockCard').style.display = 'block';
     document.getElementById('editRequestsContent').style.display = 'none';
+  }
+}
+
+let currentDirectEditData = null;
+let currentDirectEditKey = null;
+
+async function loadDirectEditRecord() {
+  const branch = document.getElementById('directEditBranch').value;
+  const date = document.getElementById('directEditDate').value;
+  const wrap = document.getElementById('directEditWrap');
+  if (!branch || !date) { wrap.innerHTML = '<p class="empty" style="margin-top:10px;">اختار الفرع والتاريخ الأول.</p>'; return; }
+
+  wrap.innerHTML = '<p class="empty" style="margin-top:10px;">جاري التحميل...</p>';
+  const key = `inv_count:${date}:${slugify(branch)}`;
+  try {
+    const res = await gsGet(key);
+    if (!res || !res.value) { wrap.innerHTML = '<p class="empty" style="margin-top:10px;">مفيش جرد مُرسل لـ"' + branch + '" في يوم ' + date + '.</p>'; return; }
+    currentDirectEditData = JSON.parse(res.value);
+    currentDirectEditKey = key;
+    renderDirectEditItems();
+  } catch (e) {
+    wrap.innerHTML = `<p class="empty" style="margin-top:10px;">${e && e.message ? e.message : 'تعذر التحميل، حاول تاني.'}</p>`;
+  }
+}
+
+function renderDirectEditItems() {
+  const wrap = document.getElementById('directEditWrap');
+  if (!currentDirectEditData) return;
+  const items = currentDirectEditData.items || [];
+  let html = `<p class="muted" style="margin-top:10px;">${items.length} صنف — عدّل السعر أو الكمية وبعدين احفظ. أي تعديل هنا بيتطبق فورًا على السجل من غير طلب موافقة.</p>`;
+  html += '<table style="margin-top:6px;"><thead><tr><th>الصنف</th><th>الكمية</th><th>السعر</th><th>القيمة</th><th></th></tr></thead><tbody>';
+  items.forEach((r, i) => {
+    html += `<tr>
+      <td>${r.name}</td>
+      <td><input type="number" step="any" min="0" value="${r.qty}" style="width:80px;" onchange="updateDirectEditField(${i}, 'qty', this.value)"></td>
+      <td><input type="number" step="any" min="0" value="${r.price}" style="width:90px;" onchange="updateDirectEditField(${i}, 'price', this.value)"></td>
+      <td class="num" id="directEditVal${i}">${Math.round(r.qty * r.price * 100) / 100}</td>
+      <td><button class="ghost" style="color:#A32D2D;" onclick="removeDirectEditItem(${i})">حذف</button></td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  html += `<p style="margin-top:8px; font-weight:700;">الإجمالي الكلي: <span id="directEditTotal">${Math.round(items.reduce((s, r) => s + r.qty * r.price, 0) * 100) / 100}</span></p>`;
+  html += `<button class="primary" style="margin-top:10px;" onclick="saveDirectEdit()">حفظ التعديل</button>`;
+  wrap.innerHTML = html;
+}
+
+function updateDirectEditField(i, field, val) {
+  const v = parseFloat(val);
+  if (isNaN(v) || v < 0) { alert('اكتب رقم صحيح.'); renderDirectEditItems(); return; }
+  currentDirectEditData.items[i][field] = v;
+  const r = currentDirectEditData.items[i];
+  const valCell = document.getElementById(`directEditVal${i}`);
+  if (valCell) valCell.textContent = Math.round(r.qty * r.price * 100) / 100;
+  const totalCell = document.getElementById('directEditTotal');
+  if (totalCell) totalCell.textContent = Math.round(currentDirectEditData.items.reduce((s, x) => s + x.qty * x.price, 0) * 100) / 100;
+}
+
+function removeDirectEditItem(i) {
+  if (!confirm('حذف الصنف ده من الجرد؟')) return;
+  currentDirectEditData.items.splice(i, 1);
+  renderDirectEditItems();
+}
+
+async function saveDirectEdit() {
+  if (!currentDirectEditData || !currentDirectEditKey) return;
+  const ownerPassword = prompt('اكتب كلمة سر صاحب النظام لتأكيد الحفظ:');
+  if (ownerPassword === null) return;
+  if (ownerPassword !== currentAdminPassword) { alert('كلمة السر غلط، اتلغت العملية.'); return; }
+
+  currentDirectEditData.totalValue = Math.round(currentDirectEditData.items.reduce((s, r) => s + r.qty * r.price, 0) * 100) / 100;
+  try {
+    const ok = await gsSet(currentDirectEditKey, JSON.stringify(currentDirectEditData));
+    if (!ok) throw new Error();
+    lastSubmittedData[currentDirectEditData.branch] = currentDirectEditData;
+    if (currentDetailBranch === currentDirectEditData.branch) renderBranchDetailView();
+    alert('اتحفظ التعديل بنجاح.');
+  } catch (e) {
+    alert('حصل خطأ أثناء الحفظ، حاول تاني.');
   }
 }
 
