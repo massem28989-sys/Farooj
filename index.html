@@ -1118,8 +1118,12 @@
             </select>
           </div>
           <div>
-            <label>التاريخ</label>
+            <label>من تاريخ</label>
             <input type="date" id="deleteRecordDate">
+          </div>
+          <div>
+            <label>لحد تاريخ <span class="muted">(اختياري)</span></label>
+            <input type="date" id="deleteRecordDateTo">
           </div>
         </div>
         <button class="primary" style="width:100%;" onclick="loadDeleteRecordsList()">بحث</button>
@@ -2196,13 +2200,17 @@ function unlockDeleteRecords() {
 
 async function loadDeleteRecordsList() {
   const type = document.getElementById('deleteRecordType').value;
-  const date = document.getElementById('deleteRecordDate').value;
+  const dateFrom = document.getElementById('deleteRecordDate').value;
+  const dateToRaw = document.getElementById('deleteRecordDateTo').value;
+  const dateTo = dateToRaw || dateFrom; // لو سايب "لحد تاريخ" فاضي، البحث بيبقى ليوم واحد زي الأول
   const hint = document.getElementById('deleteRecordsHint');
   const listCard = document.getElementById('deleteRecordsListCard');
-  if (!date) { hint.textContent = 'اختار التاريخ الأول.'; hint.style.color = '#A32D2D'; return; }
+  if (!dateFrom) { hint.textContent = 'اختار التاريخ الأول.'; hint.style.color = '#A32D2D'; return; }
+  if (dateTo < dateFrom) { hint.textContent = '"لحد تاريخ" لازم يكون بعد "من تاريخ".'; hint.style.color = '#A32D2D'; return; }
 
   hint.textContent = 'جاري البحث...'; hint.style.color = '#8A7F6A';
   listCard.style.display = 'none';
+  const dates = dateRangeList(dateFrom, dateTo);
 
   try {
     if (type === 'inv_editrequests') {
@@ -2217,15 +2225,15 @@ async function loadDeleteRecordsList() {
         }
       } catch (e) { index = []; }
       editRequests = index;
-      const rows = index.filter(r => r.date === date).map(r => ({
+      const rows = index.filter(r => r.date >= dateFrom && r.date <= dateTo).map(r => ({
         key: `inv_editrequests:${r.id}`, indexId: r.id,
         branch: `${r.branch} (${r.editorName})`, date: r.date,
         itemCount: '-', totalValue: r.status === 'pending' ? 'محتاج موافقة' : (r.status === 'approved' ? 'تمت الموافقة' : 'مرفوض')
       }));
       lastDeleteRecordsList = rows;
     } else if (type === 'inv_factory_order') {
-      const listResult = await gsList(`inv_factory_order:${date}:`);
-      const keys = listResult.keys || [];
+      const listResults = await Promise.all(dates.map(date => gsList(`inv_factory_order:${date}:`).then(r => r.keys || []).catch(() => [])));
+      const keys = listResults.flat();
       const rows = [];
       const results = await Promise.all(keys.map(k => gsGet(k).catch(() => null)));
       results.forEach((res, i) => {
@@ -2237,8 +2245,8 @@ async function loadDeleteRecordsList() {
       });
       lastDeleteRecordsList = rows;
     } else if (type === 'inv_transfer') {
-      const listResult = await gsList(`inv_transfer:${date}:`);
-      const keys = listResult.keys || [];
+      const listResults = await Promise.all(dates.map(date => gsList(`inv_transfer:${date}:`).then(r => r.keys || []).catch(() => [])));
+      const keys = listResults.flat();
       const rows = [];
       const results = await Promise.all(keys.map(k => gsGet(k).catch(() => null)));
       results.forEach((res, i) => {
@@ -2250,8 +2258,8 @@ async function loadDeleteRecordsList() {
       });
       lastDeleteRecordsList = rows;
     } else {
-      const listResult = await gsList(`${type}:${date}:`);
-      const keys = listResult.keys || [];
+      const listResults = await Promise.all(dates.map(date => gsList(`${type}:${date}:`).then(r => r.keys || []).catch(() => [])));
+      const keys = listResults.flat();
       const rows = [];
       const results = await Promise.all(keys.map(k => gsGet(k).catch(() => null)));
       results.forEach((res, i) => {
@@ -2266,7 +2274,7 @@ async function loadDeleteRecordsList() {
       });
       lastDeleteRecordsList = rows;
     }
-    hint.textContent = '';
+    hint.textContent = lastDeleteRecordsList.length ? `${lastDeleteRecordsList.length} سجل من ${dateFrom} لحد ${dateTo}` : '';
     listCard.style.display = 'block';
     renderDeleteRecordsList(type);
   } catch (e) {
@@ -2280,7 +2288,7 @@ function renderDeleteRecordsList(type) {
   const wrap = document.getElementById('deleteRecordsListWrap');
   document.getElementById('deleteRecordsCount').textContent = lastDeleteRecordsList.length;
   selectedDeleteRecords.clear();
-  if (lastDeleteRecordsList.length === 0) { wrap.innerHTML = '<p class="empty">مفيش سجلات في هذا اليوم.</p>'; return; }
+  if (lastDeleteRecordsList.length === 0) { wrap.innerHTML = '<p class="empty">مفيش سجلات في الفترة دي.</p>'; return; }
 
   const typeLabels = { inv_count: 'الجرد', inv_waste: 'التالف', inv_transfer: 'التحويل', inv_factory_order: 'طلبية المصنع', inv_editrequests: 'طلب التعديل' };
   const typeLabel = typeLabels[type] || 'السجل';
