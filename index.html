@@ -431,14 +431,25 @@
         <div id="myFactoryChangeRequestsWrap" style="margin-top:14px;"></div>
       </div>
 
-      <div class="card" id="receiveFactoryOrderCard" style="display:none;">
-        <h2>تشييك استلام الطلبية</h2>
-        <p class="muted" style="margin-top:-8px;">لما الطلبية توصل، شيّك على كل صنف من الفاتورة. لو صنف مجاش أو ناقص، سجّله وبلّغ المصنع بضغطة واحدة.</p>
-        <div id="receiveFactoryOrderWrap"></div>
-        <button class="primary" style="width:100%; padding:12px; margin-top:12px;" onclick="submitFactoryReceiptCheck()" id="submitReceiptCheckBtn">إرسال تقرير الاستلام</button>
-        <div id="receiveFactoryOrderToast"></div>
-        <div id="myFactoryShortageReportsWrap" style="margin-top:14px;"></div>
       </div>
+
+      <!-- ===== RECEIVE FACTORY ORDER SUB-VIEW ===== -->
+      <div id="receiveFactoryOrderView" style="display:none;">
+        <div class="card">
+          <h2>تشييك استلام الطلبية</h2>
+          <p class="muted" style="margin-top:-8px;">لما الطلبية توصل، شيّك على كل صنف من الفاتورة. لو صنف مجاش أو ناقص، سجّله وبلّغ المصنع بضغطة واحدة.</p>
+          <div class="row" style="grid-template-columns: 1fr auto; align-items:end;">
+            <div>
+              <label>اختار التاريخ</label>
+              <input type="date" id="receiveFactoryOrderDate" onchange="renderReceiveFactoryOrderGate()">
+            </div>
+            <button class="ghost" onclick="renderReceiveFactoryOrderGate()">تحميل</button>
+          </div>
+          <div id="receiveFactoryOrderWrap" style="margin-top:10px;"><p class="empty">جاري التحميل...</p></div>
+          <button class="primary" style="width:100%; padding:12px; margin-top:12px; display:none;" onclick="submitFactoryReceiptCheck()" id="submitReceiptCheckBtn">إرسال تقرير الاستلام</button>
+          <div id="receiveFactoryOrderToast"></div>
+          <div id="myFactoryShortageReportsWrap" style="margin-top:14px;"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1172,7 +1183,8 @@ let branchTabs = [
   { id: 'viewMyWaste', label: 'عرض التالف المسجل', group: 'التالف' },
   { id: 'transfers', label: 'تحويل جديد', group: 'التحويلات' },
   { id: 'receiveTransfers', label: 'استلام التحويلات', group: 'التحويلات' },
-  { id: 'factoryOrder', label: 'طلبية المصنع' }
+  { id: 'factoryOrder', label: 'طلبية المصنع', group: 'طلبية المصنع' },
+  { id: 'receiveFactoryOrder', label: 'تشييك استلام الطلبية', group: 'طلبية المصنع' }
 ];
 let adminTabs = [
   { id: 'admin', label: 'لوحة الجرد', group: 'Operation' },
@@ -1188,7 +1200,7 @@ let adminTabs = [
   { id: 'deleteRecords', label: 'حذف السجلات', group: 'Accountant' }
 ];
 const TAB_BUTTON_ID = {
-  count: 'tabCountBtn', viewMyCount: 'tabViewMyCountBtn', printBlank: 'tabPrintBlankBtn', waste: 'tabWasteBtn', transfers: 'tabTransfersBtn', receiveTransfers: 'tabReceiveTransfersBtn', viewMyWaste: 'tabViewMyWasteBtn', factoryOrder: 'tabFactoryOrderBtn',
+  count: 'tabCountBtn', viewMyCount: 'tabViewMyCountBtn', printBlank: 'tabPrintBlankBtn', waste: 'tabWasteBtn', transfers: 'tabTransfersBtn', receiveTransfers: 'tabReceiveTransfersBtn', viewMyWaste: 'tabViewMyWasteBtn', factoryOrder: 'tabFactoryOrderBtn', receiveFactoryOrder: 'tabReceiveFactoryOrderBtn',
   admin: 'tabAdminBtn', editRequests: 'tabEditRequestsBtn', wasteAdmin: 'tabWasteAdminBtn', transfersAdmin: 'tabTransfersAdminBtn', manage: 'tabManageBtn', factoryOrdersAdmin: 'tabFactoryOrdersAdminBtn',
   users: 'tabUsersBtn', settings: 'tabSettingsBtn', cost: 'tabCostBtn',
   newItems: 'tabNewItemsBtn', deleteRecords: 'tabDeleteRecordsBtn'
@@ -1947,6 +1959,7 @@ function switchTab(tab) {
   setDisplay('viewMyWasteView', tab === 'viewMyWaste' ? 'block' : 'none');
   setDisplay('printBlankView', tab === 'printBlank' ? 'block' : 'none');
   setDisplay('factoryOrderView', tab === 'factoryOrder' ? 'block' : 'none');
+  setDisplay('receiveFactoryOrderView', tab === 'receiveFactoryOrder' ? 'block' : 'none');
   setDisplay('factoryOrdersAdminView', tab === 'factoryOrdersAdmin' ? 'block' : 'none');
   setDisplay('wasteView', tab === 'waste' ? 'block' : 'none');
   setDisplay('transfersView', tab === 'transfers' ? 'block' : 'none');
@@ -1967,6 +1980,7 @@ function switchTab(tab) {
   toggleActive('tabViewMyWasteBtn', tab === 'viewMyWaste');
   toggleActive('tabPrintBlankBtn', tab === 'printBlank');
   toggleActive('tabFactoryOrderBtn', tab === 'factoryOrder');
+  toggleActive('tabReceiveFactoryOrderBtn', tab === 'receiveFactoryOrder');
   toggleActive('tabFactoryOrdersAdminBtn', tab === 'factoryOrdersAdmin');
   toggleActive('tabWasteBtn', tab === 'waste');
   toggleActive('tabTransfersBtn', tab === 'transfers');
@@ -1986,6 +2000,7 @@ function switchTab(tab) {
   if (tab === 'viewMyWaste') renderViewMyWasteGate();
   if (tab === 'printBlank') renderPrintBlankCategoryChips();
   if (tab === 'factoryOrder') renderFactoryOrderGate();
+  if (tab === 'receiveFactoryOrder') renderReceiveFactoryOrderGate();
   if (tab === 'factoryOrdersAdmin') renderFactoryOrdersAdminGate();
   if (tab === 'waste') renderWasteGate();
   if (tab === 'transfers') renderTransferGate();
@@ -3641,31 +3656,67 @@ async function loadSentFactoryOrder() {
     wrap.innerHTML = html;
     card.style.display = 'block';
     loadMyFactoryChangeRequests();
-    loadReceiveFactoryOrderCard(data);
   } catch (e) { card.style.display = 'none'; }
 }
 
-// بيوري قايمة الأصناف اللي المصنع بعتها فعليًا (بعد أي تعديل من المصنع نفسه)، عشان الفرع يشيّك عليها وقت الاستلام
-function loadReceiveFactoryOrderCard(orderData) {
-  const card = document.getElementById('receiveFactoryOrderCard');
-  const wrap = document.getElementById('receiveFactoryOrderWrap');
-  const items = orderData.items || [];
-  if (!items.length) { card.style.display = 'none'; return; }
-  card.style.display = 'block';
+// ===== تشييك استلام الطلبية: تبويب مستقل، بيحمّل طلبية أي يوم مختار =====
+let currentReceiveOrderData = null;
 
-  let html = '<div class="table-scroll"><table><thead><tr><th>الصنف</th><th>مرسل حسب الفاتورة</th><th>استلمت فعليًا</th><th>الحالة</th></tr></thead><tbody>';
-  items.forEach((it, i) => {
-    html += `<tr>
-      <td>${it.name}</td>
-      <td class="num">${it.qty} ${it.unit}</td>
-      <td><input type="number" step="any" min="0" value="${it.qty}" id="receiveQty${i}" style="width:80px;" oninput="updateReceiveStatus(${i}, ${it.qty})"></td>
-      <td id="receiveStatus${i}" class="num">—</td>
-    </tr>`;
-  });
-  html += '</tbody></table></div>';
-  wrap.innerHTML = html;
-  items.forEach((it, i) => updateReceiveStatus(i, it.qty));
-  loadMyFactoryShortageReports();
+function renderReceiveFactoryOrderGate() {
+  if (!currentUser) return;
+  if (!document.getElementById('receiveFactoryOrderDate').value) {
+    document.getElementById('receiveFactoryOrderDate').value = todayStr();
+  }
+  loadReceiveFactoryOrderCard();
+}
+
+// بيوري قايمة الأصناف اللي المصنع بعتها فعليًا (بعد أي تعديل من المصنع نفسه)، عشان الفرع يشيّك عليها وقت الاستلام
+async function loadReceiveFactoryOrderCard() {
+  if (!currentUser) return;
+  const wrap = document.getElementById('receiveFactoryOrderWrap');
+  const submitBtn = document.getElementById('submitReceiptCheckBtn');
+  const date = document.getElementById('receiveFactoryOrderDate').value;
+  if (!date) { wrap.innerHTML = '<p class="empty">اختار التاريخ الأول.</p>'; submitBtn.style.display = 'none'; return; }
+
+  wrap.innerHTML = '<p class="empty">جاري التحميل...</p>';
+  const key = `inv_factory_order:${date}:${slugify(currentUser.branch)}`;
+  try {
+    const res = await gsGet(key);
+    if (!res || !res.value) {
+      wrap.innerHTML = `<p class="empty">مفيش طلبية مُرسلة ليوم ${date}.</p>`;
+      submitBtn.style.display = 'none';
+      currentReceiveOrderData = null;
+      loadMyFactoryShortageReports();
+      return;
+    }
+    const data = JSON.parse(res.value);
+    currentReceiveOrderData = data;
+    const items = data.items || [];
+    if (!items.length) {
+      wrap.innerHTML = '<p class="empty">الطلبية دي مفيهاش أصناف.</p>';
+      submitBtn.style.display = 'none';
+      loadMyFactoryShortageReports();
+      return;
+    }
+
+    let html = '<div class="table-scroll"><table><thead><tr><th>الصنف</th><th>مرسل حسب الفاتورة</th><th>استلمت فعليًا</th><th>الحالة</th></tr></thead><tbody>';
+    items.forEach((it, i) => {
+      html += `<tr>
+        <td>${it.name}</td>
+        <td class="num">${it.qty} ${it.unit}</td>
+        <td><input type="number" step="any" min="0" value="${it.qty}" id="receiveQty${i}" style="width:80px;" oninput="updateReceiveStatus(${i}, ${it.qty})"></td>
+        <td id="receiveStatus${i}" class="num">—</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    wrap.innerHTML = html;
+    submitBtn.style.display = 'block';
+    items.forEach((it, i) => updateReceiveStatus(i, it.qty));
+    loadMyFactoryShortageReports();
+  } catch (e) {
+    wrap.innerHTML = `<p class="empty">${e && e.message ? e.message : 'تعذر التحميل، حاول تاني.'}</p>`;
+    submitBtn.style.display = 'none';
+  }
 }
 
 function updateReceiveStatus(i, sentQty) {
@@ -3683,15 +3734,10 @@ async function submitFactoryReceiptCheck() {
   if (!currentUser) return;
   const toast = document.getElementById('receiveFactoryOrderToast');
   const btn = document.getElementById('submitReceiptCheckBtn');
-  const date = todayStr();
-  const key = `inv_factory_order:${date}:${slugify(currentUser.branch)}`;
+  const date = document.getElementById('receiveFactoryOrderDate').value || todayStr();
 
-  let orderData;
-  try {
-    const res = await gsGet(key);
-    if (!res || !res.value) { toast.innerHTML = '<div class="toast err">تعذر إيجاد الطلبية.</div>'; return; }
-    orderData = JSON.parse(res.value);
-  } catch (e) { toast.innerHTML = '<div class="toast err">تعذر التحميل، حاول تاني.</div>'; return; }
+  const orderData = currentReceiveOrderData;
+  if (!orderData) { toast.innerHTML = '<div class="toast err">حمّل الطلبية الأول.</div>'; return; }
 
   const items = orderData.items || [];
   const shortages = [];
@@ -3738,9 +3784,11 @@ async function loadMyFactoryShortageReports() {
   try {
     const res = await gsGet('inv_factory_order_shortage:index');
     const index = (res && res.value) ? JSON.parse(res.value) : [];
-    const mine = index.filter(r => r.branch === currentUser.branch && r.date === todayStr());
+    const dateEl = document.getElementById('receiveFactoryOrderDate');
+    const date = (dateEl && dateEl.value) || todayStr();
+    const mine = index.filter(r => r.branch === currentUser.branch && r.date === date);
     if (!mine.length) { wrap.innerHTML = ''; return; }
-    let html = '<p class="muted" style="margin-top:6px;">بلاغات النواقص اللي بعتها النهاردة:</p><table><thead><tr><th>عدد الأصناف</th><th>الحالة</th></tr></thead><tbody>';
+    let html = `<p class="muted" style="margin-top:6px;">بلاغات النواقص اللي بعتها ليوم ${date}:</p><table><thead><tr><th>عدد الأصناف</th><th>الحالة</th></tr></thead><tbody>`;
     mine.forEach(r => {
       const statusLabel = r.status === 'resolved' ? '<span style="color:#2E7D32;">اتحل ✓</span>' : '<span style="color:#B36B00;">قيد المراجعة</span>';
       html += `<tr><td class="num">${r.itemsCount}</td><td>${statusLabel}</td></tr>`;
