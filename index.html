@@ -4518,6 +4518,19 @@ async function loadWasteAdminView() {
       if (!res || !res.value) return;
       try {
         const data = JSON.parse(res.value);
+        // إنقاذ السجلات الناقصة: لو الحقول مفقودة لأي سبب، نستخرجها من المفتاح نفسه
+        // (شكل المفتاح: inv_waste:التاريخ:اسم-الفرع) عشان مايختفيش أي تالف اتسجل فعلاً
+        if (!data.date || !data.branch) {
+          const parts = String(allKeys[i]).split(':');
+          if (!data.date && parts[1]) data.date = parts[1];
+          if (!data.branch && parts[2]) {
+            const slug = parts[2];
+            const match = BRANCHES.find(b => slugify(b.name) === slug);
+            data.branch = match ? match.name : slug.replace(/_/g, ' ');
+          }
+        }
+        if (!data.branch) return; // لو لسه مش عارفينه، منقدرش نعرضه
+        if (!Array.isArray(data.items)) data.items = []; // حماية إضافية عشان .forEach مايوقعش لو العمود ده ناقص
         if (wasteAdminAccessLevel === 'operation' && currentWasteOperationUser && !currentWasteOperationUser.branches.includes(data.branch)) return;
         submitted[allKeys[i]] = data;
       } catch (e) { /* skip */ }
@@ -5320,10 +5333,20 @@ async function fetchFactoryOrdersForDay(date) {
     const listResult = await gsList(`inv_factory_order:${date}:`);
     const keys = listResult.keys || [];
     const results = await Promise.all(keys.map(k => gsGet(k).catch(() => null)));
-    results.forEach(res => {
+    results.forEach((res, i) => {
       if (!res || !res.value) return;
       try {
         const data = JSON.parse(res.value);
+        // نفس إنقاذ السجلات الناقصة: لو اسم الفرع مفقود، نستخرجه من المفتاح نفسه بدل ما نضيّع الطلبية كاملة
+        if (!data.branch) {
+          const parts = String(keys[i]).split(':');
+          if (parts[2]) {
+            const slug = parts[2];
+            const match = BRANCHES.find(b => slugify(b.name) === slug);
+            data.branch = match ? match.name : slug.replace(/_/g, ' ');
+          }
+        }
+        if (!data.branch) return;
         submitted[data.branch] = data;
       } catch (e) { /* skip */ }
     });
