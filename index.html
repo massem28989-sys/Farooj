@@ -4099,6 +4099,14 @@ async function loadIncomingTransfers() {
       if (!res || !res.value) return;
       try {
         const data = JSON.parse(res.value);
+        // نفس إنقاذ السجلات الناقصة — لو toBranch مفقود، نستخرجه من المفتاح قبل ما نفلتر بيه
+        if (!data.toBranch) {
+          const parts = String(allKeys[i]).split(':');
+          const branchPart = parts[2] || '';
+          const m = branchPart.match(/^(.+?)_to_(.+?)_\d+$/);
+          if (m) { const b = BRANCHES.find(x => slugify(x.name) === m[2]); data.toBranch = b ? b.name : m[2].replace(/_/g, ' '); }
+        }
+        if (!Array.isArray(data.items)) data.items = [];
         if (data.toBranch === currentUser.branch) incoming[allKeys[i]] = data;
       } catch (e) { /* skip */ }
     });
@@ -4856,7 +4864,23 @@ async function loadTransfersAdminView() {
     const results = await gsGetBatch(allKeys);
     results.forEach((res, i) => {
       if (!res || !res.value) return;
-      try { submitted[allKeys[i]] = JSON.parse(res.value); } catch (e) { /* skip */ }
+      try {
+        const data = JSON.parse(res.value);
+        // إنقاذ السجلات الناقصة: لو الفرع المُرسل أو المُستلم أو التاريخ مفقودين، نستخرجهم من المفتاح نفسه
+        // (شكل المفتاح: inv_transfer:التاريخ:فرع-مرسل_to_فرع-مستلم_وقت) عشان أي تحويل حقيقي مايختفيش من اللوحة
+        if (!data.date || !data.fromBranch || !data.toBranch) {
+          const parts = String(allKeys[i]).split(':');
+          if (!data.date && parts[1]) data.date = parts[1];
+          const branchPart = parts[2] || '';
+          const m = branchPart.match(/^(.+?)_to_(.+?)_\d+$/);
+          if (m) {
+            if (!data.fromBranch) { const b = BRANCHES.find(x => slugify(x.name) === m[1]); data.fromBranch = b ? b.name : m[1].replace(/_/g, ' '); }
+            if (!data.toBranch) { const b = BRANCHES.find(x => slugify(x.name) === m[2]); data.toBranch = b ? b.name : m[2].replace(/_/g, ' '); }
+          }
+        }
+        if (!Array.isArray(data.items)) data.items = [];
+        submitted[allKeys[i]] = data;
+      } catch (e) { /* skip */ }
     });
   } catch (e) {
     wrap.innerHTML = `<p class="empty">${e && e.message ? e.message : 'تعذر تحميل البيانات.'}</p>`;
