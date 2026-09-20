@@ -238,8 +238,14 @@
       </div>
 
       <div id="wasteView" style="display:none;">
-        <div class="card">
-        <h2>تسجيل تالف</h2>
+        <div class="card" style="border:3px solid #A32D2D; background:#FDF2F2">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="font-size:28px">🗑️</span>
+          <div>
+            <h2 style="margin:0;color:#A32D2D">تسجيل تالف</h2>
+            <p class="muted" style="margin:2px 0 0">للأصناف التالفة أو منتهية الصلاحية أو اللي اتكسرت — <b>مش طلبية من المصنع</b></p>
+          </div>
+        </div>
         <div class="row">
           <div>
             <label>الفرع</label>
@@ -388,8 +394,14 @@
 
       <!-- ===== FACTORY ORDER SUB-VIEW ===== -->
       <div id="factoryOrderView" style="display:none;">
-        <div class="card">
-        <h2>تسجيل طلبية للمصنع</h2>
+        <div class="card" style="border:3px solid #1E5AA8; background:#F0F5FC">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="font-size:28px">📦</span>
+          <div>
+            <h2 style="margin:0;color:#1E5AA8">تسجيل طلبية للمصنع</h2>
+            <p class="muted" style="margin:2px 0 0">للأصناف اللي محتاج تطلبها عشان تشتغل بيها — <b>مش تالف أو أصناف اتكسرت</b></p>
+          </div>
+        </div>
         <div class="row">
           <div>
             <label>الفرع</label>
@@ -3440,6 +3452,11 @@ async function submitWaste() {
   if (!date) { toast.innerHTML = '<div class="toast err">اختار التاريخ الأول.</div>'; return; }
   if (currentWasteItems.length === 0) { toast.innerHTML = '<div class="toast err">مفيش أصناف مضافة للتالف.</div>'; return; }
 
+  // تأكيد أخير واضح — عشان محدش يبعت تالف وهو قاصد يبعت طلبية للمصنع بالغلط
+  const previewList = currentWasteItems.slice(0, 5).map(r => `• ${r.name}: ${r.qty}`).join('\n');
+  const confirmMsg = `🗑️ هتسجّل "تالف" (مش طلبية مصنع) لفرع ${branch} بتاريخ ${date}:\n\n${previewList}${currentWasteItems.length > 5 ? `\n… و${currentWasteItems.length - 5} صنف كمان` : ''}\n\nمتأكد إن ده تالف فعلاً؟`;
+  if (!confirm(confirmMsg)) return;
+
   btn.disabled = true; btn.textContent = 'جاري التحقق...';
   const key = `inv_waste:${date}:${slugify(branch)}`;
 
@@ -4033,6 +4050,11 @@ async function submitFactoryOrder() {
   const btn = document.getElementById('submitFactoryOrderBtn');
 
   if (currentFactoryOrderItems.length === 0) { toast.innerHTML = '<div class="toast err">مفيش أصناف مضافة للطلبية.</div>'; return; }
+
+  // تأكيد أخير واضح — عشان محدش يبعت طلبية للمصنع وهو قاصد يسجّل تالف بالغلط
+  const previewList = currentFactoryOrderItems.slice(0, 5).map(r => `• ${r.name}: ${r.qty}`).join('\n');
+  const confirmMsg = `📦 هتبعت "طلبية للمصنع" (مش تالف) باسم فرع ${branch}:\n\n${previewList}${currentFactoryOrderItems.length > 5 ? `\n… و${currentFactoryOrderItems.length - 5} صنف كمان` : ''}\n\nمتأكد إنك عايز تطلب الأصناف دي من المصنع؟`;
+  if (!confirm(confirmMsg)) return;
 
   btn.disabled = true; btn.textContent = 'جاري التحقق...';
   const date = todayStr(); // تاريخ لحظة الإرسال الفعلية
