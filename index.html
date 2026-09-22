@@ -3775,8 +3775,10 @@ function updateReceiveStatus(i, sentQty) {
   const received = parseFloat(input.value);
   const sent = parseFloat(sentQty) || 0;
   if (isNaN(received) || received < 0) { statusCell.innerHTML = '<span style="color:#A32D2D;">رقم غلط</span>'; return; }
-  if (received >= sent) { statusCell.innerHTML = '<span style="color:#2E7D32;">✓ كامل</span>'; }
-  else { statusCell.innerHTML = `<span style="color:#A32D2D;">ناقص ${Math.round((sent - received) * 100) / 100}</span>`; }
+  const diff = Math.round((received - sent) * 100) / 100;
+  if (Math.abs(diff) < 0.005) { statusCell.innerHTML = '<span style="color:#2E7D32;">✓ كامل</span>'; }
+  else if (diff < 0) { statusCell.innerHTML = `<span style="color:#A32D2D;">ناقص ${Math.abs(diff)}</span>`; }
+  else { statusCell.innerHTML = `<span style="color:#B36B00;">زيادة ${diff}</span>`; }
 }
 
 async function submitFactoryReceiptCheck() {
