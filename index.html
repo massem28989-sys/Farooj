@@ -449,7 +449,7 @@
       <div id="receiveFactoryOrderView" style="display:none;">
         <div class="card">
           <h2>تشييك استلام الطلبية</h2>
-          <p class="muted" style="margin-top:-8px;">لما الطلبية توصل، شيّك على كل صنف من الفاتورة. لو صنف مجاش أو ناقص، سجّله وبلّغ المصنع بضغطة واحدة.</p>
+          <p class="muted" style="margin-top:-8px;">لما الطلبية توصل، شيّك على كل صنف من الفاتورة. لو صنف مجاش أو ناقص أو زيادة، سجّله وبلّغ المصنع بضغطة واحدة.</p>
           <div class="row" style="grid-template-columns: 1fr auto; align-items:end;">
             <div>
               <label>اختار التاريخ</label>
@@ -3791,23 +3791,27 @@ async function submitFactoryReceiptCheck() {
   if (!orderData) { toast.innerHTML = '<div class="toast err">حمّل الطلبية الأول.</div>'; return; }
 
   const items = orderData.items || [];
-  const shortages = [];
+  const diffs = [];
   items.forEach((it, i) => {
     const input = document.getElementById(`receiveQty${i}`);
     const received = input ? parseFloat(input.value) : it.qty;
-    if (!isNaN(received) && received < it.qty) {
-      shortages.push({ name: it.name, unit: it.unit, sentQty: it.qty, receivedQty: received, missingQty: Math.round((it.qty - received) * 100) / 100 });
+    if (isNaN(received)) return;
+    const diff = Math.round((received - it.qty) * 100) / 100;
+    if (diff < -0.004) {
+      diffs.push({ type: 'shortage', name: it.name, unit: it.unit, sentQty: it.qty, receivedQty: received, missingQty: Math.abs(diff) });
+    } else if (diff > 0.004) {
+      diffs.push({ type: 'surplus', name: it.name, unit: it.unit, sentQty: it.qty, receivedQty: received, extraQty: diff });
     }
   });
 
-  if (!shortages.length) {
-    toast.innerHTML = '<div class="toast ok">تمام، كل الأصناف كاملة، مفيش نواقص تتبلغ.</div>';
+  if (!diffs.length) {
+    toast.innerHTML = '<div class="toast ok">تمام، كل الأصناف كاملة، مفيش فروق تتبلغ.</div>';
     return;
   }
 
   btn.disabled = true; btn.textContent = 'جاري الإرسال...';
   const id = Date.now();
-  const report = { id, branch: currentUser.branch, date, items: shortages, reportedBy: currentUser.username, status: 'pending', createdAt: new Date().toISOString() };
+  const report = { id, branch: currentUser.branch, date, items: diffs, reportedBy: currentUser.username, status: 'pending', createdAt: new Date().toISOString() };
 
   try {
     const ok1 = await gsSet(`inv_factory_order_shortage:${id}`, JSON.stringify(report));
@@ -3817,10 +3821,15 @@ async function submitFactoryReceiptCheck() {
       const res = await gsGet('inv_factory_order_shortage:index');
       index = (res && res.value) ? JSON.parse(res.value) : [];
     } catch (e) { index = []; }
-    index.push({ id, branch: report.branch, date, itemsCount: shortages.length, reportedBy: report.reportedBy, status: 'pending', createdAt: report.createdAt });
+    index.push({ id, branch: report.branch, date, itemsCount: diffs.length, reportedBy: report.reportedBy, status: 'pending', createdAt: report.createdAt });
     await gsSet('inv_factory_order_shortage:index', JSON.stringify(index));
 
-    toast.innerHTML = `<div class="toast ok">تم إبلاغ المصنع بـ${shortages.length} صنف ناقص.</div>`;
+    const shortCount = diffs.filter(x=>x.type==='shortage').length;
+    const surplusCount = diffs.filter(x=>x.type==='surplus').length;
+    const parts = [];
+    if (shortCount) parts.push(`${shortCount} صنف ناقص`);
+    if (surplusCount) parts.push(`${surplusCount} صنف زيادة`);
+    toast.innerHTML = `<div class="toast ok">تم إبلاغ المصنع بـ${parts.join(' و')}.</div>`;
     loadMyFactoryShortageReports();
   } catch (e) {
     toast.innerHTML = '<div class="toast err">حصل خطأ أثناء الإبلاغ، حاول تاني.</div>';
