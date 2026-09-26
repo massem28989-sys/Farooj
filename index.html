@@ -4698,7 +4698,7 @@ function renderWasteDetailView() {
     html += '<div class="table-scroll"><table><thead><tr><th>الصنف</th><th>الوحدة</th><th style="width:110px;">الكمية</th><th>السبب</th><th>السعر</th><th></th></tr></thead><tbody>';
     editingWasteItems.forEach((it, idx) => {
       html += `<tr>
-        <td>${it.name}</td><td>${it.unit}</td>
+        <td>${it.name}${it.addedByAdmin?' <span style="font-size:10.5px;color:#8A5A00;background:#FFF1D6;padding:1px 6px;border-radius:10px">أضافته الإدارة</span>':''}</td><td>${it.unit}</td>
         <td><input type="number" min="0" step="0.01" value="${it.qty}" style="padding:6px 8px; font-size:13px; width:90px;" onchange="updateEditingWasteQty(${idx}, this.value)"></td>
         <td><input type="text" value="${(it.reason||'').replace(/"/g, '&quot;')}" style="padding:6px 8px; font-size:12.5px;" onchange="updateEditingWasteReason(${idx}, this.value)"></td>
         <td class="num">${it.price}</td>
@@ -4708,6 +4708,19 @@ function renderWasteDetailView() {
     html += '</tbody></table></div>';
     const total = editingWasteItems.reduce((s, it) => s + it.qty * it.price, 0);
     html += `<p class="muted" style="margin-top:8px;">الإجمالي الجديد: <b>${Math.round(total*100)/100}</b></p>`;
+    const q = s => String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    html += `<div style="margin-top:12px;padding:12px;border:1px dashed #D6C8B8;border-radius:10px;background:#FFFCF8">
+      <b>إضافة صنف نسيه الفرع</b>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center">
+        <input type="text" id="wasteAddName" list="wasteAddList" placeholder="اكتب اسم الصنف…" value="${q(wasteAddDraft.name)}" oninput="onWasteAddNameInput(this.value)" style="flex:2;min-width:180px;padding:7px 9px;font-size:13px">
+        <datalist id="wasteAddList">${inventoryItems.map(i=>`<option value="${q(i.name)}">`).join('')}</datalist>
+        <input type="number" id="wasteAddQty" min="0" step="0.01" placeholder="الكمية" value="${q(wasteAddDraft.qty)}" oninput="wasteAddDraft.qty=this.value" style="width:90px;padding:7px 9px;font-size:13px">
+        <select id="wasteAddUnit" onchange="wasteAddDraft.factor=this.value" style="width:120px;padding:7px;font-size:13px">${wasteAddUnitOptionsHtml()}</select>
+        <input type="text" id="wasteAddReason" placeholder="السبب (اختياري)" value="${q(wasteAddDraft.reason)}" oninput="wasteAddDraft.reason=this.value" style="flex:1;min-width:120px;padding:7px 9px;font-size:13px">
+        <button class="primary" onclick="addEditingWasteItem()" style="padding:8px 14px">إضافة</button>
+      </div>
+      <p class="muted" id="wasteAddHint" style="margin:6px 0 0">${wasteAddDraft.hint||''}</p>
+    </div>`;
     html += `<button class="primary" style="margin-top:10px;" onclick="saveEditedWasteDetail()">حفظ تعديل التالف</button>`;
     document.getElementById('wasteBranchDetailWrap').innerHTML = html;
   } else {
@@ -4725,6 +4738,42 @@ function startEditWasteDetail() {
   if (editingWasteDetail) { editingWasteDetail = false; renderWasteDetailView(); return; }
   editingWasteDetail = true;
   editingWasteItems = data.items.map(it => ({ ...it }));
+  wasteAddDraft = { name:'', qty:'', reason:'', factor:'1', hint:'' };
+  renderWasteDetailView();
+}
+
+let wasteAddDraft = { name:'', qty:'', reason:'', factor:'1', hint:'' };
+function wasteAddFindItem(name){ const n=String(name||'').trim(); return inventoryItems.find(i=>i.name===n) || inventoryItems.find(i=>i.name.trim().toLowerCase()===n.toLowerCase()) || null; }
+function wasteAddUnitOptionsHtml(){
+  const it = wasteAddFindItem(wasteAddDraft.name);
+  if(!it) return '<option value="1">الوحدة</option>';
+  return getUnitOptions(it).map(o=>`<option value="${o.factor}" ${String(o.factor)===String(wasteAddDraft.factor)?'selected':''}>${o.unit}</option>`).join('');
+}
+function onWasteAddNameInput(v){
+  wasteAddDraft.name = v;
+  const it = wasteAddFindItem(v);
+  const sel = document.getElementById('wasteAddUnit'), hint = document.getElementById('wasteAddHint');
+  wasteAddDraft.factor = '1';
+  if(sel) sel.innerHTML = wasteAddUnitOptionsHtml();
+  wasteAddDraft.hint = it ? `${it.category||''} · سعر ${it.unit}: ${it.price||0}` : (v.trim()?'الصنف ده مش موجود في الكتالوج — اختاره من القايمة':'');
+  if(hint) hint.textContent = wasteAddDraft.hint;
+}
+function addEditingWasteItem(){
+  const it = wasteAddFindItem(wasteAddDraft.name);
+  if(!it){ alert('اختار الصنف من القايمة (لازم يكون موجود في الكتالوج).'); return; }
+  const qty = parseFloat(wasteAddDraft.qty);
+  if(isNaN(qty) || qty<=0){ alert('اكتب كمية صحيحة.'); return; }
+  const factor = parseFloat(wasteAddDraft.factor) || 1;
+  const baseQty = Math.round(qty*factor*1000)/1000;
+  const existing = editingWasteItems.find(r=>r.name===it.name);
+  if(existing){
+    if(!confirm(`"${it.name}" موجود أصلاً في التالف بكمية ${existing.qty} ${existing.unit}. أجمع عليه ${baseQty}؟`)) return;
+    existing.qty = Math.round((existing.qty + baseQty)*1000)/1000;
+    if(wasteAddDraft.reason.trim()) existing.reason = existing.reason ? existing.reason+' / '+wasteAddDraft.reason.trim() : wasteAddDraft.reason.trim();
+  } else {
+    editingWasteItems.push({ name:it.name, unit:it.unit, price:it.price||0, category:it.category||'أخرى', qty:baseQty, reason:wasteAddDraft.reason.trim(), addedByAdmin:true });
+  }
+  wasteAddDraft = { name:'', qty:'', reason:'', factor:'1', hint:'' };
   renderWasteDetailView();
 }
 
