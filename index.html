@@ -4311,6 +4311,12 @@ function printBlankInventorySheet() {
   });
   // الترتيب بيتبع ترتيبك المخصص في شاشة التحكم بالظبط
   const order = onNames.filter(n => groups[n]);
+  // والتصنيفات الفرعية بنفس ترتيبها في شجرة التصنيفات
+  order.forEach(main => {
+    const subsOrder = ((CATEGORIES_TREE.find(m => m.name === main) || {}).subs) || [];
+    const idx = s => { const i = subsOrder.indexOf(s); return i < 0 ? 9999 : i; };
+    groups[main].orderedSubs.sort((a, b) => idx(a) - idx(b));
+  });
 
   const colHeads = colsN === 1 ? ['الكمية']
                  : colsN === 2 ? ['ثلاجة', 'مخزن']
@@ -4319,8 +4325,8 @@ function printBlankInventorySheet() {
   const headCells  = colHeads.map(h => `<th class="qtyh">${h}</th>`).join('');
 
   let n = 0;
+  // الأصناف بتطلع بنفس ترتيبها في النظام (ترتيب الكتالوج) — مش أبجدي — عشان الورقة تطابق شاشة الجرد
   const rowsFor = (arr) => arr
-    .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
     .map(it => { n++; return `<tr>
       <td class="num">${n}</td>
       <td class="nm">${it.name}</td>
