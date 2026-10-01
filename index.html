@@ -512,7 +512,9 @@
           <button class="ghost" onclick="loadAdminView()">تحديث</button>
           <button class="ghost" onclick="exportAdminToExcel()">تصدير Excel لكل الفروع</button>
         </div>
+        <button class="ghost" style="margin-top:8px" onclick="runCountAudit()">🩺 فحص سلامة الجرد لكل الفروع</button>
       </div>
+      <div class="card" id="countAuditCard" style="display:none"><h2 style="margin-top:0">فحص سلامة الجرد</h2><div id="countAuditWrap"></div></div>
 
       <div class="metrics">
         <div class="metric"><div class="n" id="aBranches">0 / 22</div><div class="l">فروع جردت</div></div>
@@ -6382,6 +6384,105 @@ async function submitCount() {
   btn.disabled = false; btn.textContent = 'إرسال الجرد';
 }
 
+/* ================= فحص سلامة الجرد لكل الفروع ================= */
+const _normBr = s => String(s||'').replace(/\s+/g,' ').replace(/\s*([()\-–])\s*/g,'$1').trim().toLowerCase();
+function canonicalBranchName(name){
+  if(!name) return null;
+  if(BRANCHES.some(b=>b.name===name)) return name;
+  const m = BRANCHES.find(b=>_normBr(b.name)===_normBr(name));
+  return m ? m.name : null;
+}
+let LAST_AUDIT_TEXT = '';
+async function runCountAudit(){
+  const date = document.getElementById('adminDate').value;
+  const card = document.getElementById('countAuditCard'), wrap = document.getElementById('countAuditWrap');
+  card.style.display='block'; wrap.innerHTML='<p class="empty">جاري فحص جرد كل الفروع…</p>';
+  if(!date){ wrap.innerHTML='<p class="empty">اختار اليوم الأول.</p>'; return; }
+  if(!inventoryItems || !inventoryItems.length){ try{ await loadInventoryCatalog(); }catch(e){} }
+  const visible = adminAccessLevel==='operation' && currentOperationUser ? BRANCHES.filter(b=>currentOperationUser.branches.includes(b.name)) : BRANCHES;
+  const catByName = {}; inventoryItems.forEach(i=>catByName[i.name]=i);
+
+  let keys=[];
+  try{ keys = (await gsList(`inv_count:${date}:`)).keys || []; }catch(e){ wrap.innerHTML=`<p class="empty">تعذر التحميل: ${e.message||''}</p>`; return; }
+  const results = await gsGetBatch(keys);
+  const failedLoads = results.filter(r=>!r||!r.value).length;
+
+  const perBranch = {}; visible.forEach(b=>perBranch[b.name]={records:[], issues:[]});
+  const orphans = [];
+  keys.forEach((k,i)=>{
+    const res=results[i]; const slug=String(k).split(':')[2]||'';
+    const keyBranch = (BRANCHES.find(b=>slugify(b.name)===slug)||{}).name || null;
+    if(!res||!res.value){ (perBranch[keyBranch]||{issues:orphans}).issues.push(`السجل موجود بس ماتحمّلش (${k}) — جرّب تحديث`); return; }
+    let data; try{ data=JSON.parse(res.value); }catch(e){ (perBranch[keyBranch]||{issues:orphans}).issues.push(`سجل تالف مش مقروء (${k})`); return; }
+    const issues=[];
+    const fieldBranch = data.branch||'';
+    const canon = canonicalBranchName(fieldBranch) || keyBranch;
+    if(!fieldBranch) issues.push('اسم الفرع ناقص جوه الجرد (اتعرف من المفتاح)');
+    else if(!BRANCHES.some(b=>b.name===fieldBranch)){
+      if(canonicalBranchName(fieldBranch)) issues.push(`اسم الفرع جوه الجرد مكتوب "${fieldBranch}" ومختلف في المسافات عن "${canonicalBranchName(fieldBranch)}" — ده بيخلي لوحة الجرد تعرضه كأنه مسجّلش`);
+      else issues.push(`اسم الفرع جوه الجرد "${fieldBranch}" مش موجود في قايمة الفروع`);
+    }
+    if(keyBranch && canon && keyBranch!==canon) issues.push(`الجرد محفوظ تحت مفتاح فرع "${keyBranch}" لكن مكتوب جواه "${fieldBranch}"`);
+    if(!keyBranch) issues.push(`مفتاح السجل (${slug}) مش مطابق لأي فرع`);
+    const items = Array.isArray(data.items)? data.items : null;
+    if(!items) issues.push('قايمة الأصناف ناقصة أو تالفة');
+    let calc=0; const seen={}; let notInCat=0, unitDiff=0, badQty=0, noPrice=0, dups=0;
+    (items||[]).forEach(it=>{
+      const q=+it.qty, p=+it.price;
+      if(!isFinite(q)||q<0) badQty++;
+      if(!(p>0)) noPrice++;
+      calc += (isFinite(q)?q:0)*(isFinite(p)?p:0);
+      if(seen[it.name]) dups++; seen[it.name]=1;
+      const cat=catByName[it.name];
+      if(!cat) notInCat++; else if(String(cat.unit||'').trim()!==String(it.unit||'').trim()) unitDiff++;
+    });
+    if(badQty) issues.push(`${badQty} صنف كميته مش رقم صحيح أو بالسالب`);
+    if(dups) issues.push(`${dups} صنف متكرر في نفس الجرد`);
+    if(noPrice) issues.push(`${noPrice} صنف من غير سعر (قيمته بتتحسب صفر)`);
+    if(notInCat) issues.push(`${notInCat} صنف مش موجود في الكتالوج الحالي (اسمه اتغير أو اتمسح)`);
+    if(unitDiff) issues.push(`${unitDiff} صنف وحدته في الجرد مختلفة عن وحدته في الكتالوج دلوقتي`);
+    if(items && Math.abs((+data.totalValue||0)-calc)>0.5) issues.push(`الإجمالي المحفوظ ${Math.round((+data.totalValue||0)*100)/100} بس المحسوب من الأصناف ${Math.round(calc*100)/100}`);
+    const target = canon && perBranch[canon] ? canon : (keyBranch && perBranch[keyBranch] ? keyBranch : null);
+    const rec = { key:k, items:(items||[]).length, total:Math.round(calc*100)/100, issues };
+    if(target) perBranch[target].records.push(rec); else orphans.push(`سجل مش مربوط بأي فرع ظاهر: ${k} (${issues.join('، ')||'—'})`);
+  });
+
+  const counts = Object.values(perBranch).filter(x=>x.records.length).map(x=>x.records[0].items).sort((a,b)=>a-b);
+  const median = counts.length? counts[Math.floor(counts.length/2)] : 0;
+  const rows=[]; let okN=0, badN=0, missN=0;
+  visible.forEach(b=>{
+    const x=perBranch[b.name]; const issues=[...x.issues];
+    if(!x.records.length){ missN++; rows.push({b:b.name, status:'miss', items:'—', total:'—', issues:issues.length?issues:['مفيش جرد متسجل لليوم ده']}); return; }
+    if(x.records.length>1) issues.push(`فيه ${x.records.length} سجلات جرد لنفس الفرع — اللوحة بتعرض واحد بس`);
+    x.records.forEach(r=>issues.push(...r.issues));
+    const r0=x.records[0];
+    if(median && r0.items < median*0.5) issues.push(`عدد الأصناف (${r0.items}) أقل من نص المعتاد عند باقي الفروع (${median}) — ممكن الجرد اتبعت ناقص`);
+    if(issues.length) badN++; else okN++;
+    rows.push({b:b.name, status:issues.length?'warn':'ok', items:r0.items, total:r0.total, issues});
+  });
+
+  const order={warn:0,miss:1,ok:2}; rows.sort((a,b)=>order[a.status]-order[b.status]);
+  let html = `<p class="muted">يوم ${date} — ✓ سليم: <b>${okN}</b> · ⚠ فيه ملاحظات: <b style="color:#B36B00">${badN}</b> · ✗ مسجّلش: <b style="color:#A32D2D">${missN}</b>${failedLoads?` · <b style="color:#A32D2D">${failedLoads} سجل ماتحمّلش (جرّب تاني)</b>`:''}</p>`;
+  html += '<div class="table-scroll"><table><thead><tr><th>الفرع</th><th>الحالة</th><th>أصناف</th><th>الإجمالي</th><th>الملاحظات</th></tr></thead><tbody>';
+  rows.forEach(r=>{
+    const st = r.status==='ok'?'<span style="color:#2E7D32">✓ سليم</span>':r.status==='warn'?'<span style="color:#B36B00">⚠ راجع</span>':'<span style="color:#A32D2D">✗ مسجّلش</span>';
+    html += `<tr><td>${r.b}</td><td>${st}</td><td class="num">${r.items}</td><td class="num">${r.total}</td><td style="font-size:12.5px">${r.issues.length?r.issues.map(s=>'• '+s).join('<br>'):'—'}</td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  if(orphans.length) html += `<p style="color:#A32D2D;margin-top:8px"><b>سجلات مش مربوطة بفرع:</b><br>${orphans.map(s=>'• '+s).join('<br>')}</p>`;
+  html += `<button class="ghost" style="margin-top:10px" onclick="copyCountAudit()">📋 انسخ التقرير كنص</button> <span class="muted" id="countAuditCopied"></span>`;
+  wrap.innerHTML = html;
+
+  LAST_AUDIT_TEXT = `فحص جرد يوم ${date}: سليم ${okN} / ملاحظات ${badN} / مسجلش ${missN}${failedLoads?` / ماتحملش ${failedLoads}`:''}\n` +
+    rows.filter(r=>r.status!=='ok').map(r=>`- ${r.b} [${r.status==='warn'?'راجع':'مسجلش'}] أصناف:${r.items} إجمالي:${r.total}\n  ${r.issues.join('\n  ')}`).join('\n') +
+    (orphans.length? '\nسجلات مش مربوطة:\n  '+orphans.join('\n  ') : '');
+}
+function copyCountAudit(){
+  const done=()=>{ const el=document.getElementById('countAuditCopied'); if(el) el.textContent='اتنسخ ✓ — الصقه في الشات'; };
+  if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(LAST_AUDIT_TEXT).then(done).catch(fallback); else fallback();
+  function fallback(){ const t=document.createElement('textarea'); t.value=LAST_AUDIT_TEXT; document.body.appendChild(t); t.select(); try{document.execCommand('copy');}catch(e){} t.remove(); done(); }
+}
+
 async function loadAdminView() {
   const date = document.getElementById('adminDate').value;
   const statusWrap = document.getElementById('branchStatusWrap');
@@ -6412,6 +6513,9 @@ async function loadAdminView() {
           }
         }
         if (!data.branch) return; // لو لسه مش عارفينه، منقدرش نعرضه
+        // لو اسم الفرع المحفوظ مختلف في المسافات بس عن اسمه في القايمة (زي "(Sheikh Ammar)" و"(Sheikh Ammar )")، نربطه بالاسم الصح بدل ما يبان إنه مسجّلش
+        const canonName = canonicalBranchName(data.branch);
+        if (canonName) data.branch = canonName;
         if (adminAccessLevel === 'operation' && currentOperationUser && !currentOperationUser.branches.includes(data.branch)) return; // Operation بيشوف فروعه المسموحة بس
         submitted[data.branch] = data;
       } catch (e) { /* skip */ }
