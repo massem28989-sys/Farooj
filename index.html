@@ -1186,6 +1186,7 @@
 <script>
 const GSCRIPT_URL = "https://script.google.com/macros/s/AKfycbyMNYT0w8XeiPSXW9_of3gA7fyS6EqCw842-YA5MfVMRdppDbkz_w5Wr9xZCviXSaJw/exec";
 const SECRET_TOKEN = "B_pS9joBTY2q0lCXopjE5xMegt4fCEl9sTsyNqSGFI0"; // لازم يطابق نفس الكود في Code.gs
+const APP_VERSION = '2026-10-01'; // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = "Moustafa"; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = { admin: "Moustafa", manage: "Moustafa", users: "Moustafa", cost: "Moustafa", newItems: "Moustafa", wasteAdmin: "Moustafa", deleteRecords: "Moustafa", editRequests: "Moustafa", transfersAdmin: "Moustafa", factoryOrdersAdmin: "Moustafa" };
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -6365,7 +6366,7 @@ async function submitCount() {
 
   btn.textContent = 'جاري الإرسال...';
   const totalValue = currentCountItems.reduce((s, r) => s + (r.qty * r.price), 0);
-  const payload = { branch, date, counter, items: currentCountItems, totalValue: Math.round(totalValue * 100) / 100, submittedAt: new Date().toISOString() };
+  const payload = { branch, date, counter, items: currentCountItems, totalValue: Math.round(totalValue * 100) / 100, submittedAt: new Date().toISOString(), appVersion: APP_VERSION };
 
   try {
     const result = await gsSet(key, JSON.stringify(payload));
@@ -6392,7 +6393,7 @@ function canonicalBranchName(name){
   const m = BRANCHES.find(b=>_normBr(b.name)===_normBr(name));
   return m ? m.name : null;
 }
-let LAST_AUDIT_TEXT = '';
+let LAST_AUDIT_TEXT = ''; let LAST_AUDIT_RECS = [];
 async function runCountAudit(){
   const date = document.getElementById('adminDate').value;
   const card = document.getElementById('countAuditCard'), wrap = document.getElementById('countAuditWrap');
@@ -6408,6 +6409,7 @@ async function runCountAudit(){
   const failedLoads = results.filter(r=>!r||!r.value).length;
 
   const perBranch = {}; visible.forEach(b=>perBranch[b.name]={records:[], issues:[]});
+  LAST_AUDIT_RECS = [];
   const orphans = [];
   keys.forEach((k,i)=>{
     const res=results[i]; const slug=String(k).split(':')[2]||'';
@@ -6418,6 +6420,7 @@ async function runCountAudit(){
     const fieldBranch = data.branch||'';
     const canon = canonicalBranchName(fieldBranch) || keyBranch;
     if(!fieldBranch) issues.push('اسم الفرع ناقص جوه الجرد (اتعرف من المفتاح)');
+    if(!data.submittedAt) issues.push(data.savedAt ? `السجل ده شكله <b>مسودة حفظ تلقائي</b> مش جرد اتبعت (آخر حفظ ${new Date(data.savedAt).toLocaleString('ar-EG')}) — غالبًا جهاز الفرع شغال على نسخة قديمة` : 'السجل مفيهوش وقت إرسال — مش متبعت من شاشة الجرد العادية');
     else if(!BRANCHES.some(b=>b.name===fieldBranch)){
       if(canonicalBranchName(fieldBranch)) issues.push(`اسم الفرع جوه الجرد مكتوب "${fieldBranch}" ومختلف في المسافات عن "${canonicalBranchName(fieldBranch)}" — ده بيخلي لوحة الجرد تعرضه كأنه مسجّلش`);
       else issues.push(`اسم الفرع جوه الجرد "${fieldBranch}" مش موجود في قايمة الفروع`);
@@ -6426,11 +6429,11 @@ async function runCountAudit(){
     if(!keyBranch) issues.push(`مفتاح السجل (${slug}) مش مطابق لأي فرع`);
     const items = Array.isArray(data.items)? data.items : null;
     if(!items) issues.push('قايمة الأصناف ناقصة أو تالفة');
-    let calc=0; const seen={}; let notInCat=0, unitDiff=0, badQty=0, noPrice=0, dups=0;
+    let calc=0; const seen={}; let notInCat=0, unitDiff=0, badQty=0, noPrice=0, dups=0, priceFixable=0;
     (items||[]).forEach(it=>{
       const q=+it.qty, p=+it.price;
       if(!isFinite(q)||q<0) badQty++;
-      if(!(p>0)) noPrice++;
+      if(!(p>0)){ noPrice++; const ci=catByName[it.name]; if(ci && +ci.price>0) priceFixable++; }
       calc += (isFinite(q)?q:0)*(isFinite(p)?p:0);
       if(seen[it.name]) dups++; seen[it.name]=1;
       const cat=catByName[it.name];
@@ -6438,12 +6441,14 @@ async function runCountAudit(){
     });
     if(badQty) issues.push(`${badQty} صنف كميته مش رقم صحيح أو بالسالب`);
     if(dups) issues.push(`${dups} صنف متكرر في نفس الجرد`);
-    if(noPrice) issues.push(`${noPrice} صنف من غير سعر (قيمته بتتحسب صفر)`);
+    if(noPrice) issues.push(`${noPrice} صنف من غير سعر${priceFixable?` (منهم ${priceFixable} سعرهم موجود في الكتالوج دلوقتي)`:' (ومالهمش سعر في الكتالوج كمان)'}`);
     if(notInCat) issues.push(`${notInCat} صنف مش موجود في الكتالوج الحالي (اسمه اتغير أو اتمسح)`);
     if(unitDiff) issues.push(`${unitDiff} صنف وحدته في الجرد مختلفة عن وحدته في الكتالوج دلوقتي`);
     if(items && Math.abs((+data.totalValue||0)-calc)>0.5) issues.push(`الإجمالي المحفوظ ${Math.round((+data.totalValue||0)*100)/100} بس المحسوب من الأصناف ${Math.round(calc*100)/100}`);
     const target = canon && perBranch[canon] ? canon : (keyBranch && perBranch[keyBranch] ? keyBranch : null);
     const rec = { key:k, items:(items||[]).length, total:Math.round(calc*100)/100, issues };
+    LAST_AUDIT_RECS.push({ key:k, data, canon, date:String(k).split(':')[1]||date, calc:Math.round(calc*100)/100,
+      needsMeta: !fieldBranch || (canon && fieldBranch!==canon) || !items || Math.abs((+data.totalValue||0)-calc)>0.5, priceFixable });
     if(target) perBranch[target].records.push(rec); else orphans.push(`سجل مش مربوط بأي فرع ظاهر: ${k} (${issues.join('، ')||'—'})`);
   });
 
@@ -6470,12 +6475,82 @@ async function runCountAudit(){
   });
   html += '</tbody></table></div>';
   if(orphans.length) html += `<p style="color:#A32D2D;margin-top:8px"><b>سجلات مش مربوطة بفرع:</b><br>${orphans.map(s=>'• '+s).join('<br>')}</p>`;
-  html += `<button class="ghost" style="margin-top:10px" onclick="copyCountAudit()">📋 انسخ التقرير كنص</button> <span class="muted" id="countAuditCopied"></span>`;
+  const metaN = LAST_AUDIT_RECS.filter(r=>r.needsMeta).length, priceN = LAST_AUDIT_RECS.reduce((s,r)=>s+r.priceFixable,0);
+  html += `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+    ${metaN?`<button class="primary" onclick="fixAuditMeta()">🔧 صلّح الناقص في ${metaN} سجل (اسم الفرع والتاريخ والإجمالي)</button>`:''}
+    ${priceN?`<button class="ghost" onclick="fixAuditPrices()">💲 كمّل ${priceN} سعر ناقص من الكتالوج</button>`:''}
+    <button class="ghost" onclick="copyCountAudit()">📋 انسخ التقرير كنص</button> <span class="muted" id="countAuditCopied"></span>
+  </div><div id="countAuditDrafts" style="margin-top:10px"></div>`;
   wrap.innerHTML = html;
+  checkAuditDrafts(date, rows.filter(r=>r.status!=='ok' && (r.issues.some(s=>s.includes('مسودة')||s.includes('أقل من نص')||s.includes('ناقص جوه'))) ).map(r=>r.b), median);
 
   LAST_AUDIT_TEXT = `فحص جرد يوم ${date}: سليم ${okN} / ملاحظات ${badN} / مسجلش ${missN}${failedLoads?` / ماتحملش ${failedLoads}`:''}\n` +
-    rows.filter(r=>r.status!=='ok').map(r=>`- ${r.b} [${r.status==='warn'?'راجع':'مسجلش'}] أصناف:${r.items} إجمالي:${r.total}\n  ${r.issues.join('\n  ')}`).join('\n') +
+    rows.filter(r=>r.status!=='ok').map(r=>`- ${r.b} [${r.status==='warn'?'راجع':'مسجلش'}] أصناف:${r.items} إجمالي:${r.total}\n  ${r.issues.map(s=>s.replace(/<[^>]+>/g,'')).join('\n  ')}`).join('\n') +
     (orphans.length? '\nسجلات مش مربوطة:\n  '+orphans.join('\n  ') : '');
+}
+let AUDIT_DRAFTS = [];
+async function checkAuditDrafts(date, branches, median){
+  const box=document.getElementById('countAuditDrafts'); if(!box || !branches.length) return;
+  const lines=[]; AUDIT_DRAFTS=[];
+  for(const br of branches){
+    try{ const r=await gsGet(`inv_count_draft:${date}:${slugify(br)}`);
+      if(r&&r.value){ const d=JSON.parse(r.value); const n=(d.items||[]).length;
+        const rec = LAST_AUDIT_RECS.find(x=>x.canon===br); const recN = rec && Array.isArray(rec.data.items) ? rec.data.items.length : 0;
+        let btn='';
+        if(n>recN){ AUDIT_DRAFTS.push({br, date, draftKey:`inv_count_draft:${date}:${slugify(br)}`, targetKey: rec?rec.key:`inv_count:${date}:${slugify(br)}`, draft:d, recN});
+          btn=` <button class="ghost" style="padding:4px 10px;font-size:12px" onclick="restoreFromDraft(${AUDIT_DRAFTS.length-1})">استرجاع من المسودة</button>`; }
+        lines.push(`• <b>${br}</b>: فيه مسودة محفوظة فيها <b>${n}</b> صنف مقابل ${recN} في السجل (آخر حفظ ${d.savedAt?new Date(d.savedAt).toLocaleString('ar-EG'):'—'})${n>recN?' — المسودة أكمل':''}${btn}`); }
+      else lines.push(`• <b>${br}</b>: مفيش مسودة محفوظة — لو الجرد ناقص، الفرع محتاج يعيد الجرد ويبعته من الشاشة العادية`);
+    }catch(e){ lines.push(`• <b>${br}</b>: تعذر فحص المسودة`); }
+  }
+  box.innerHTML = `<p class="muted" style="margin:0"><b>مسودات الفروع اللي جردها ناقص أو شكله مسودة:</b><br>${lines.join('<br>')}</p>`;
+  LAST_AUDIT_TEXT += '\nالمسودات:\n' + lines.map(s=>s.replace(/<[^>]+>/g,'')).join('\n');
+}
+async function restoreFromDraft(i){
+  const x = AUDIT_DRAFTS[i]; if(!x) return;
+  const pw = prompt(`هيتم استبدال جرد "${x.br}" المحفوظ (${x.recN} صنف) بالمسودة (${(x.draft.items||[]).length} صنف).\n\nاتأكد مع الفرع إن المسودة دي هي العد الحقيقي.\nاكتب كلمة سر صاحب النظام للتأكيد:`);
+  if(pw===null) return; if(pw!==currentAdminPassword){ alert('كلمة السر غلط.'); return; }
+  const items = (x.draft.items||[]).map(it=>({...it}));
+  const total = Math.round(items.reduce((s,it)=>s+(+it.qty||0)*(+it.price||0),0)*100)/100;
+  const rec = { branch:x.br, date:x.date, counter:x.draft.counter||'', items, totalValue:total,
+    submittedAt: x.draft.savedAt || new Date().toISOString(), restoredFromDraft:true, restoredAt:new Date().toISOString() };
+  try{ if(!(await gsSet(x.targetKey, JSON.stringify(rec)))) throw new Error(); }
+  catch(e){ alert('حصل خطأ أثناء الحفظ، حاول تاني.'); return; }
+  try{ logActivity('استرجاع جرد من مسودة', `${x.br} — ${items.length} صنف`); }catch(e){}
+  alert(`اتسترجع جرد "${x.br}" من المسودة (${items.length} صنف، إجمالي ${total}).`);
+  await runCountAudit(); loadAdminView();
+}
+async function fixAuditMeta(){
+  const recs = LAST_AUDIT_RECS.filter(r=>r.needsMeta && r.canon);
+  if(!recs.length) return;
+  const pw = prompt(`هيتم تصليح ${recs.length} سجل: كتابة اسم الفرع والتاريخ، وحساب الإجمالي من الأصناف. الأصناف والكميات مش هتتلمس.\n\nاكتب كلمة سر صاحب النظام للتأكيد:`);
+  if(pw===null) return; if(pw!==currentAdminPassword){ alert('كلمة السر غلط.'); return; }
+  let ok=0;
+  for(const r of recs){
+    const fixed = { ...r.data, branch:r.canon, date:r.data.date||r.date, items:Array.isArray(r.data.items)?r.data.items:[], totalValue:r.calc,
+      submittedAt: r.data.submittedAt || r.data.savedAt || new Date().toISOString(), repairedAt:new Date().toISOString() };
+    try{ if(await gsSet(r.key, JSON.stringify(fixed))) ok++; }catch(e){}
+  }
+  try{ logActivity('تصليح سجلات جرد', `${ok} سجل — ${recs.map(r=>r.canon).join('، ')}`); }catch(e){}
+  alert(`اتصلّح ${ok} من ${recs.length} سجل.`);
+  await runCountAudit(); loadAdminView();
+}
+async function fixAuditPrices(){
+  const catByName={}; inventoryItems.forEach(i=>catByName[i.name]=i);
+  const recs = LAST_AUDIT_RECS.filter(r=>r.priceFixable>0);
+  const n = recs.reduce((s,r)=>s+r.priceFixable,0);
+  const pw = prompt(`هيتم تسعير ${n} صنف كانوا متسجلين بسعر صفر في جرد ${recs.length} فرع، بسعرهم الحالي في الكتالوج، وإعادة حساب الإجمالي.\n\nاكتب كلمة سر صاحب النظام للتأكيد:`);
+  if(pw===null) return; if(pw!==currentAdminPassword){ alert('كلمة السر غلط.'); return; }
+  let ok=0;
+  for(const r of recs){
+    const items=(r.data.items||[]).map(it=>{ const ci=catByName[it.name]; return (!(+it.price>0) && ci && +ci.price>0) ? {...it, price:+ci.price} : it; });
+    const total=Math.round(items.reduce((s,it)=>s+(+it.qty||0)*(+it.price||0),0)*100)/100;
+    const fixed={ ...r.data, branch:r.canon||r.data.branch, items, totalValue:total };
+    try{ if(await gsSet(r.key, JSON.stringify(fixed))) ok++; }catch(e){}
+  }
+  try{ logActivity('تكميل أسعار جرد', `${n} صنف في ${ok} فرع`); }catch(e){}
+  alert(`اتسعّرت الأصناف في ${ok} فرع.`);
+  await runCountAudit(); loadAdminView();
 }
 function copyCountAudit(){
   const done=()=>{ const el=document.getElementById('countAuditCopied'); if(el) el.textContent='اتنسخ ✓ — الصقه في الشات'; };
