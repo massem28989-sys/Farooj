@@ -3930,7 +3930,7 @@ async function submitFactoryOrderChangeRequest() {
       const res = await gsGet('inv_factory_order_change:index');
       index = (res && res.value) ? JSON.parse(res.value) : [];
     } catch (e) { index = []; }
-    index.push({ id, branch: req.branch, date, requestedBy: req.requestedBy, status: 'pending', createdAt: req.createdAt });
+    index.push({ id, branch: req.branch, date, note: req.note, requestedBy: req.requestedBy, status: 'pending', createdAt: req.createdAt }); // النص في الفهرس كمان عشان المصنع يقراه من غير طلب منفصل لكل تعديل
     await gsSet('inv_factory_order_change:index', JSON.stringify(index));
 
     noteEl.value = '';
@@ -5338,8 +5338,8 @@ async function loadFactoryOrderChangeRequests() {
   const labels = { pending: 'محتاج تعديل', done: 'اتعمل', rejected: 'مرفوض' };
   let html = '<div class="table-scroll"><table><thead><tr><th>الفرع</th><th>التاريخ</th><th>التعديل المطلوب</th><th>بواسطة</th><th>الحالة</th><th></th></tr></thead><tbody>';
   sorted.forEach((r, i) => {
-    let note = '-';
-    try { if (details[i] && details[i].value) note = JSON.parse(details[i].value).note || '-'; } catch (e) {}
+    let note = r.note || '-';
+    try { if (!r.note && details[i] && details[i].value) note = JSON.parse(details[i].value).note || '-'; } catch (e) {}
     const cls = r.status === 'done' ? 'status-yes' : 'status-no';
     html += `<tr>
       <td>${r.branch}</td>
