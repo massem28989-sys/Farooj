@@ -3751,24 +3751,64 @@ async function loadReceiveFactoryOrderCard() {
       return;
     }
 
-    let html = '<div class="table-scroll"><table><thead><tr><th>الصنف</th><th>مرسل حسب الفاتورة</th><th>استلمت فعليًا</th><th>الحالة</th></tr></thead><tbody>';
+    // لو المصنع صرف الطلبية، بيكون كاتب جنب كل صنف: الكمية اللي اتصرفت فعلًا (sent) + سعر الوحدة بسعر تكلفة المصنع (price) + القيمة (value)
+    const priced = items.some(it => it.price != null);
+    const fmtMoney = v => (Math.round((+v || 0) * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
+    let total = 0;
+    let html = priced ? '<p class="muted" style="margin:0 0 8px;">💰 الأسعار دي بسعر تكلفة المصنع وقت الصرف — وأسعار الأصناف في الكتالوج عندك هتتحدث بيها لما تأكد الاستلام.</p>' : '';
+    html += '<div class="table-scroll"><table><thead><tr><th>الصنف</th><th>مرسل حسب الفاتورة</th>' + (priced ? '<th>سعر الوحدة</th><th>القيمة</th>' : '') + '<th>استلمت فعليًا</th><th>الحالة</th></tr></thead><tbody>';
     items.forEach((it, i) => {
+      const sent = receiveSentQty(it);
+      const kgNote = (it.factoryQty != null && it.factoryUnit && it.factoryUnit !== it.unit) ? `<div class="muted" style="font-size:12px;">وزن: ${it.factoryQty} ${it.factoryUnit}</div>` : '';
+      const changed = (it.sent != null && Math.abs(+it.sent - (+it.qty || 0)) > 0.004) ? `<div class="muted" style="font-size:12px;">كان مطلوب ${it.qty}</div>` : '';
+      if (it.value != null) total += +it.value || 0;
       html += `<tr>
         <td>${it.name}</td>
-        <td class="num">${it.qty} ${it.unit}</td>
-        <td><input type="number" step="any" min="0" value="${it.qty}" id="receiveQty${i}" style="width:80px;" oninput="updateReceiveStatus(${i}, ${it.qty})"></td>
+        <td class="num">${sent} ${it.unit}${kgNote}${changed}</td>
+        ${priced ? `<td class="num">${it.price != null ? fmtMoney(it.price) : '—'}</td><td class="num">${it.value != null ? fmtMoney(it.value) : '—'}</td>` : ''}
+        <td><input type="number" step="any" min="0" value="${sent}" id="receiveQty${i}" style="width:80px;" oninput="updateReceiveStatus(${i}, ${sent})"></td>
         <td id="receiveStatus${i}" class="num">—</td>
       </tr>`;
     });
-    html += '</tbody></table></div>';
+    html += '</tbody>';
+    if (priced) html += `<tfoot><tr><td colspan="3"><b>إجمالي الفاتورة</b></td><td class="num"><b>${fmtMoney(total)}</b></td><td colspan="2"></td></tr></tfoot>`;
+    html += '</table></div>';
     wrap.innerHTML = html;
     submitBtn.style.display = 'block';
-    items.forEach((it, i) => updateReceiveStatus(i, it.qty));
+    items.forEach((it, i) => updateReceiveStatus(i, receiveSentQty(it)));
     loadMyFactoryShortageReports();
   } catch (e) {
     wrap.innerHTML = `<p class="empty">${e && e.message ? e.message : 'تعذر التحميل، حاول تاني.'}</p>`;
     submitBtn.style.display = 'none';
   }
+}
+
+// الكمية المرسلة فعلًا: لو المصنع سجّل كمية الصرف نعتمدها، غير كده الكمية المطلوبة
+function receiveSentQty(it) { return (it && it.sent != null) ? +it.sent : (+(it && it.qty) || 0); }
+
+// تحديث أسعار الكتالوج من فاتورة المصنع (سعر الفرع = سعر تكلفة المصنع)
+async function applyFactoryPricesToCatalog(items) {
+  const norm = u => String(u || '').trim().toLowerCase().replace(/[ًٌٍَُِّْـ]/g, '').replace(/ة/g, 'ه').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي')
+    .replace(/^(كيلو جرام|كيلوجرام|كيلو|كجم|كغ|كج|kg|kgs|كيلوغرام)$/, 'كجم').replace(/^(حبه|حبات|قطعه|قطع|pcs|pc|piece)$/, 'حبه');
+  let cat;
+  try { const res = await gsGet('inv_catalog:items'); cat = (res && res.value) ? JSON.parse(res.value) : null; } catch (e) { cat = null; }
+  if (!Array.isArray(cat)) return 0;
+  let n = 0;
+  (items || []).forEach(it => {
+    if (it.price == null) return;
+    const c = cat.find(x => String(x.name || '').trim() === String(it.name || '').trim());
+    if (!c) return;
+    let np = null;
+    if (norm(c.unit) === norm(it.unit)) np = +it.price;
+    else if (it.factoryUnit && +it.factoryQty > 0 && it.value != null && norm(c.unit) === norm(it.factoryUnit)) np = (+it.value) / (+it.factoryQty);
+    if (np == null || !(np > 0)) return;
+    np = Math.round(np * 100) / 100;
+    if (Math.abs((+c.price || 0) - np) > 0.004) { c.price = np; c.priceFrom = 'factory'; c.priceAt = todayStr(); n++; }
+  });
+  if (!n) return 0;
+  try { const ok = await gsSet('inv_catalog:items', JSON.stringify(cat)); if (!ok) return 0; } catch (e) { return 0; }
+  try { inventoryItems = cat; } catch (e) {}
+  return n;
 }
 
 function updateReceiveStatus(i, sentQty) {
@@ -3797,18 +3837,27 @@ async function submitFactoryReceiptCheck() {
   const diffs = [];
   items.forEach((it, i) => {
     const input = document.getElementById(`receiveQty${i}`);
-    const received = input ? parseFloat(input.value) : it.qty;
+    const sentQ = receiveSentQty(it);
+    const received = input ? parseFloat(input.value) : sentQ;
     if (isNaN(received)) return;
-    const diff = Math.round((received - it.qty) * 100) / 100;
+    const diff = Math.round((received - sentQ) * 100) / 100;
+    const priceInfo = it.price != null ? { price: +it.price } : {};
     if (diff < -0.004) {
-      diffs.push({ type: 'shortage', name: it.name, unit: it.unit, sentQty: it.qty, receivedQty: received, missingQty: Math.abs(diff) });
+      diffs.push({ type: 'shortage', name: it.name, unit: it.unit, sentQty: sentQ, receivedQty: received, missingQty: Math.abs(diff), ...priceInfo, ...(it.price != null ? { missingValue: Math.round(Math.abs(diff) * it.price * 100) / 100 } : {}) });
     } else if (diff > 0.004) {
-      diffs.push({ type: 'surplus', name: it.name, unit: it.unit, sentQty: it.qty, receivedQty: received, extraQty: diff });
+      diffs.push({ type: 'surplus', name: it.name, unit: it.unit, sentQty: sentQ, receivedQty: received, extraQty: diff, ...priceInfo });
     }
   });
 
+  // أسعار المصنع ← الكتالوج: بتتحدث مع تأكيد الاستلام (سواء فيه فروق أو لا)
+  let priceNote = '';
+  if (items.some(it => it.price != null)) {
+    const nUpd = await applyFactoryPricesToCatalog(items);
+    if (nUpd) priceNote = ` واتحدث سعر ${nUpd} صنف في الكتالوج لسعر المصنع.`;
+  }
+
   if (!diffs.length) {
-    toast.innerHTML = '<div class="toast ok">تمام، كل الأصناف كاملة، مفيش فروق تتبلغ.</div>';
+    toast.innerHTML = `<div class="toast ok">تمام، كل الأصناف كاملة، مفيش فروق تتبلغ.${priceNote}</div>`;
     return;
   }
 
@@ -3832,7 +3881,7 @@ async function submitFactoryReceiptCheck() {
     const parts = [];
     if (shortCount) parts.push(`${shortCount} صنف ناقص`);
     if (surplusCount) parts.push(`${surplusCount} صنف زيادة`);
-    toast.innerHTML = `<div class="toast ok">تم إبلاغ المصنع بـ${parts.join(' و')}.</div>`;
+    toast.innerHTML = `<div class="toast ok">تم إبلاغ المصنع بـ${parts.join(' و')}.${priceNote}</div>`;
     loadMyFactoryShortageReports();
   } catch (e) {
     toast.innerHTML = '<div class="toast err">حصل خطأ أثناء الإبلاغ، حاول تاني.</div>';
