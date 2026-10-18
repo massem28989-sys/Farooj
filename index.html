@@ -3703,7 +3703,9 @@ async function loadSentFactoryOrder() {
     const data = JSON.parse(res.value);
     let html = `<p class="muted">وقت الإرسال: ${data.submittedAt ? new Date(data.submittedAt).toLocaleString('ar-EG') : '-'}</p>`;
     html += '<div class="table-scroll"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th></tr></thead><tbody>';
-    (data.items || []).forEach(it => { html += `<tr><td>${it.name}</td><td class="num">${it.qty}</td><td>${it.unit}</td></tr>`; });
+    (data.items || []).forEach(it => { const ed = it.orig != null && Math.abs(+it.orig - (+it.qty || 0)) > 0.004;
+      html += `<tr><td>${it.name}</td><td class="num">${it.qty}${ed ? `<div class="muted" style="font-size:12px;color:#B25E10;">طلبت ${it.orig} — المصنع عدّلها</div>` : ''}</td><td>${it.unit}</td></tr>`; });
+    (data.removed || []).forEach(it => { html += `<tr style="opacity:.7"><td><s>${it.name}</s></td><td class="num"><s>${it.orig != null ? it.orig : it.qty}</s><div class="muted" style="font-size:12px;color:#A32D2D;">المصنع شالها</div></td><td>${it.unit || ''}</td></tr>`; });
     html += '</tbody></table></div>';
     wrap.innerHTML = html;
     card.style.display = 'block';
@@ -3760,7 +3762,9 @@ async function loadReceiveFactoryOrderCard() {
     items.forEach((it, i) => {
       const sent = receiveSentQty(it);
       const kgNote = (it.factoryQty != null && it.factoryUnit && it.factoryUnit !== it.unit) ? `<div class="muted" style="font-size:12px;">وزن: ${it.factoryQty} ${it.factoryUnit}</div>` : '';
-      const changed = (it.sent != null && Math.abs(+it.sent - (+it.qty || 0)) > 0.004) ? `<div class="muted" style="font-size:12px;">كان مطلوب ${it.qty}</div>` : '';
+      const asked = (it.orig != null && Math.abs(+it.orig - (+it.qty || 0)) > 0.004) ? +it.orig : null; // الفرع طلب كام أصلًا قبل تعديل المصنع
+      const changed = asked != null ? `<div class="muted" style="font-size:12px;color:#B25E10;">طلبت ${asked} — المصنع عدّلها لـ ${it.qty}</div>`
+        : (it.sent != null && Math.abs(+it.sent - (+it.qty || 0)) > 0.004) ? `<div class="muted" style="font-size:12px;">كان مطلوب ${it.qty}</div>` : '';
       if (it.value != null) total += +it.value || 0;
       html += `<tr>
         <td>${it.name}</td>
