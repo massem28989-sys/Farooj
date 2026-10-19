@@ -4144,9 +4144,16 @@ async function submitFactoryOrder() {
   const payload = { branch, date, items: currentFactoryOrderItems, submittedAt: new Date().toISOString() };
 
   try {
-    const result = await gsSet(key, JSON.stringify(payload));
+    let result = await gsSet(key, JSON.stringify(payload));
+    // تأكيد: بنقرا الطلبية من السيرفر تاني ونتأكد إنها بتاعتنا — لو فرعين بعتوا في نفس اللحظة السيرفر ممكن يكتب واحدة فوق التانية
     if (result) {
-      toast.innerHTML = `<div class="toast ok">تم إرسال طلبية المصنع لفرع "${branch}" بنجاح (${currentFactoryOrderItems.length} صنف).</div>`;
+      const same = async () => { try { const r = await gsGet(key); const v = r && r.value ? JSON.parse(r.value) : null; return !!v && v.branch === branch && v.submittedAt === payload.submittedAt; } catch (e) { return false; } };
+      let ok = await same();
+      for (let t = 0; t < 2 && !ok; t++) { await new Promise(r => setTimeout(r, 800 * (t + 1))); result = await gsSet(key, JSON.stringify(payload)); ok = result && await same(); }
+      if (!ok) { toast.innerHTML = `<div class="toast err">⚠ الطلبية اتبعتت بس السيرفر رجّع حاجة تانية في مكانها. كلّم المصنع وابعتلهم صورة الطلبية دي قبل ما تقفل الصفحة.</div>`; btn.disabled = false; btn.textContent = 'إرسال طلبية المصنع'; return; }
+    }
+    if (result) {
+      toast.innerHTML = `<div class="toast ok">تم إرسال طلبية المصنع لفرع "${branch}" بنجاح (${currentFactoryOrderItems.length} صنف) ✓ واتأكدنا إنها وصلت.</div>`;
       currentFactoryOrderItems = [];
       renderFactoryOrderItems();
       renderFactoryOrderItemPicker();
