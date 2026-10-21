@@ -437,7 +437,7 @@
         <div style="margin-top:14px; border-top:1px solid #E0E0E0; padding-top:14px;">
           <label>محتاج تعديل؟ اكتب المطلوب بالتفصيل وابعته للمصنع</label>
           <textarea id="factoryOrderChangeNote" rows="3" placeholder="مثلاً: زوّد كباب دجاج 5 كيلو، وألغِ الطاووق" style="width:100%; padding:10px; font-family:inherit; font-size:13.5px; border:1px solid #E0E0E0; border-radius:8px;"></textarea>
-          <button class="ghost" style="margin-top:10px;" onclick="submitFactoryOrderChangeRequest()">إبلاغ المصنع بطلب التعديل</button>
+          <button class="ghost" id="factoryOrderChangeBtn" style="margin-top:10px;" onclick="submitFactoryOrderChangeRequest()">إبلاغ المصنع بطلب التعديل</button>
           <p class="muted" id="factoryOrderChangeHint" style="margin-top:8px;">&nbsp;</p>
         </div>
         <div id="myFactoryChangeRequestsWrap" style="margin-top:14px;"></div>
@@ -3868,6 +3868,14 @@ async function submitFactoryReceiptCheck() {
   btn.disabled = true; btn.textContent = 'جاري الإرسال...';
   const id = Date.now();
   const report = { id, branch: currentUser.branch, date, items: diffs, reportedBy: currentUser.username, status: 'pending', createdAt: new Date().toISOString() };
+  // منع التكرار: نفس الفروق لنفس اليوم اتبعتت قبل كده؟ ما نبعتهاش تاني
+  const sig = diffs.map(x => x.name + ':' + (x.missingQty || x.extraQty)).sort().join('|');
+  try {
+    const r0 = await gsGet('inv_factory_order_shortage:index');
+    const idx0 = (r0 && r0.value) ? JSON.parse(r0.value) : [];
+    const dup = idx0.find(r => r.branch === report.branch && r.date === date && (r.sig ? r.sig === sig : (r.itemsCount === diffs.length && Date.now() - new Date(r.createdAt).getTime() < 15 * 60e3)));
+    if (dup) { toast.innerHTML = `<div class="toast ok">التقرير ده اتبعت للمصنع قبل كده ✓ (${new Date(dup.createdAt).toLocaleTimeString('ar-EG')}) — مش محتاج تبعته تاني.${priceNote}</div>`; btn.disabled = false; btn.textContent = 'إرسال تقرير الاستلام'; loadMyFactoryShortageReports(); return; }
+  } catch (e) {}
 
   try {
     const ok1 = await gsSet(`inv_factory_order_shortage:${id}`, JSON.stringify(report));
@@ -3877,7 +3885,7 @@ async function submitFactoryReceiptCheck() {
       const res = await gsGet('inv_factory_order_shortage:index');
       index = (res && res.value) ? JSON.parse(res.value) : [];
     } catch (e) { index = []; }
-    index.push({ id, branch: report.branch, date, itemsCount: diffs.length, reportedBy: report.reportedBy, status: 'pending', createdAt: report.createdAt });
+    index.push({ id, branch: report.branch, date, itemsCount: diffs.length, sig, reportedBy: report.reportedBy, status: 'pending', createdAt: report.createdAt });
     await gsSet('inv_factory_order_shortage:index', JSON.stringify(index));
 
     const shortCount = diffs.filter(x=>x.type==='shortage').length;
@@ -3924,6 +3932,19 @@ async function submitFactoryOrderChangeRequest() {
   const date = todayStr();
   const id = Date.now();
   const req = { id, branch: currentUser.branch, date, note, requestedBy: currentUser.username, status: 'pending', createdAt: new Date().toISOString() };
+  // منع التكرار: الإرسال بياخد كام ثانية — الزرار بيتقفل لحد ما يخلص، ولو نفس الطلب اتبعت قبل كده ما يتبعتش تاني
+  const btn = document.getElementById('factoryOrderChangeBtn');
+  if (btn && btn.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'جاري الإرسال... استنى'; }
+  const done = () => { if (btn) { btn.disabled = false; btn.textContent = 'إبلاغ المصنع بطلب التعديل'; } };
+  try {
+    const r0 = await gsGet('inv_factory_order_change:index');
+    const idx0 = (r0 && r0.value) ? JSON.parse(r0.value) : [];
+    const norm = t => String(t || '').replace(/\s+/g, ' ').trim();
+    if (idx0.some(r => r.branch === req.branch && r.date === date && norm(r.note) === norm(note))) {
+      hint.textContent = 'الطلب ده اتبعت للمصنع قبل كده ✓ — مش محتاج تبعته تاني.'; hint.style.color = '#3B6D11'; noteEl.value = ''; done(); loadMyFactoryChangeRequests(); return;
+    }
+  } catch (e) {}
 
   try {
     const ok1 = await gsSet(`inv_factory_order_change:${id}`, JSON.stringify(req));
@@ -3938,10 +3959,10 @@ async function submitFactoryOrderChangeRequest() {
     await gsSet('inv_factory_order_change:index', JSON.stringify(index));
 
     noteEl.value = '';
-    hint.textContent = 'تم إبلاغ المصنع بطلب التعديل، هيظهرلهم في لوحة طلبيات المصنع.'; hint.style.color = '#3B6D11';
-    loadMyFactoryChangeRequests();
+    hint.textContent = 'تم إبلاغ المصنع بطلب التعديل ✓ — هيظهرلهم في لوحة طلبيات المصنع.'; hint.style.color = '#3B6D11';
+    loadMyFactoryChangeRequests(); done();
   } catch (e) {
-    hint.textContent = 'حصل خطأ أثناء الإرسال، حاول تاني.'; hint.style.color = '#A32D2D';
+    hint.textContent = 'حصل خطأ أثناء الإرسال، حاول تاني.'; hint.style.color = '#A32D2D'; done();
   }
 }
 
