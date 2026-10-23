@@ -460,6 +460,7 @@
           <div id="receiveFactoryOrderWrap" style="margin-top:10px;"><p class="empty">جاري التحميل...</p></div>
           <button class="primary" style="width:100%; padding:12px; margin-top:12px; display:none;" onclick="submitFactoryReceiptCheck()" id="submitReceiptCheckBtn">إرسال تقرير الاستلام</button>
           <div id="receiveFactoryOrderToast"></div>
+          <div id="receiptMarkInfo"></div>
           <div id="myFactoryShortageReportsWrap" style="margin-top:14px;"></div>
         </div>
       </div>
@@ -3780,7 +3781,7 @@ async function loadReceiveFactoryOrderCard() {
     wrap.innerHTML = html;
     submitBtn.style.display = 'block';
     items.forEach((it, i) => updateReceiveStatus(i, receiveSentQty(it)));
-    loadMyFactoryShortageReports();
+    loadMyFactoryShortageReports(); showReceiptMark(date);
   } catch (e) {
     wrap.innerHTML = `<p class="empty">${e && e.message ? e.message : 'تعذر التحميل، حاول تاني.'}</p>`;
     submitBtn.style.display = 'none';
@@ -3828,6 +3829,21 @@ function updateReceiveStatus(i, sentQty) {
   else { statusCell.innerHTML = `<span style="color:#B36B00;">زيادة ${diff}</span>`; }
 }
 
+// علامة «الفرع شيّك واستلم» — بتتسجل مع كل تقرير استلام (كامل أو فيه فروق) عشان المصنع يعرف مين أكّد ومين لسه
+async function saveReceiptMark(date, result, nShort, nSurplus) {
+  const mark = { branch: currentUser.branch, date, by: currentUser.username, at: new Date().toISOString(), result, nShort: nShort || 0, nSurplus: nSurplus || 0 };
+  try { return !!(await gsSet(`inv_factory_order_receipt:${date}:${slugify(currentUser.branch)}`, JSON.stringify(mark))); } catch (e) { return false; }
+}
+async function showReceiptMark(date) {
+  const el = document.getElementById('receiptMarkInfo'); if (!el) return;
+  el.innerHTML = '';
+  try {
+    const r = await gsGet(`inv_factory_order_receipt:${date}:${slugify(currentUser.branch)}`);
+    const m = r && r.value ? JSON.parse(r.value) : null; if (!m) return;
+    el.innerHTML = `<div class="toast ok" style="margin-top:8px">✓ أكّدت الاستلام ليوم ${date} — ${m.result === 'ok' ? 'كامل' : 'فيه فروق اتبلّغت'} (${m.by || ''} · ${new Date(m.at).toLocaleString('ar-EG')})</div>`;
+  } catch (e) {}
+}
+
 async function submitFactoryReceiptCheck() {
   if (!currentUser) return;
   const toast = document.getElementById('receiveFactoryOrderToast');
@@ -3861,7 +3877,13 @@ async function submitFactoryReceiptCheck() {
   }
 
   if (!diffs.length) {
-    toast.innerHTML = `<div class="toast ok">تمام، كل الأصناف كاملة، مفيش فروق تتبلغ.${priceNote}</div>`;
+    btn.disabled = true; btn.textContent = 'جاري الإرسال...';
+    const ok = await saveReceiptMark(date, 'ok');
+    btn.disabled = false; btn.textContent = 'إرسال تقرير الاستلام';
+    toast.innerHTML = ok
+      ? `<div class="toast ok">تمام، كل الأصناف كاملة ✓ — المصنع اتبلّغ إنك استلمت.${priceNote}</div>`
+      : `<div class="toast err">كل الأصناف كاملة، بس التأكيد ما وصلش للمصنع — دوس الزرار تاني.</div>`;
+    showReceiptMark(date);
     return;
   }
 
@@ -3874,7 +3896,7 @@ async function submitFactoryReceiptCheck() {
     const r0 = await gsGet('inv_factory_order_shortage:index');
     const idx0 = (r0 && r0.value) ? JSON.parse(r0.value) : [];
     const dup = idx0.find(r => r.branch === report.branch && r.date === date && (r.sig ? r.sig === sig : (r.itemsCount === diffs.length && Date.now() - new Date(r.createdAt).getTime() < 15 * 60e3)));
-    if (dup) { toast.innerHTML = `<div class="toast ok">التقرير ده اتبعت للمصنع قبل كده ✓ (${new Date(dup.createdAt).toLocaleTimeString('ar-EG')}) — مش محتاج تبعته تاني.${priceNote}</div>`; btn.disabled = false; btn.textContent = 'إرسال تقرير الاستلام'; loadMyFactoryShortageReports(); return; }
+    if (dup) { await saveReceiptMark(date, 'diff', diffs.filter(x=>x.type==='shortage').length, diffs.filter(x=>x.type==='surplus').length); toast.innerHTML = `<div class="toast ok">التقرير ده اتبعت للمصنع قبل كده ✓ (${new Date(dup.createdAt).toLocaleTimeString('ar-EG')}) — مش محتاج تبعته تاني.${priceNote}</div>`; btn.disabled = false; btn.textContent = 'إرسال تقرير الاستلام'; loadMyFactoryShortageReports(); return; }
   } catch (e) {}
 
   try {
@@ -3893,8 +3915,9 @@ async function submitFactoryReceiptCheck() {
     const parts = [];
     if (shortCount) parts.push(`${shortCount} صنف ناقص`);
     if (surplusCount) parts.push(`${surplusCount} صنف زيادة`);
+    await saveReceiptMark(date, 'diff', shortCount, surplusCount);
     toast.innerHTML = `<div class="toast ok">تم إبلاغ المصنع بـ${parts.join(' و')}.${priceNote}</div>`;
-    loadMyFactoryShortageReports();
+    loadMyFactoryShortageReports(); showReceiptMark(date);
   } catch (e) {
     toast.innerHTML = '<div class="toast err">حصل خطأ أثناء الإبلاغ، حاول تاني.</div>';
   }
