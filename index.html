@@ -1299,7 +1299,7 @@
 const GSCRIPT_URL = "https://script.google.com/macros/s/AKfycbyMNYT0w8XeiPSXW9_of3gA7fyS6EqCw842-YA5MfVMRdppDbkz_w5Wr9xZCviXSaJw/exec";
 const SECRET_TOKEN = "B_pS9joBTY2q0lCXopjE5xMegt4fCEl9sTsyNqSGFI0"; // لازم يطابق نفس الكود في Code.gs
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '26-10 · 15:00'; // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '27-10 · 21:30'; // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = "Moustafa"; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = { admin: "Moustafa", manage: "Moustafa", users: "Moustafa", cost: "Moustafa", newItems: "Moustafa", wasteAdmin: "Moustafa", deleteRecords: "Moustafa", editRequests: "Moustafa", transfersAdmin: "Moustafa", factoryOrdersAdmin: "Moustafa" };
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -1642,12 +1642,22 @@ async function exportFullBackup() {
   btn.disabled = false; btn.textContent = 'تصدير نسخة احتياطية كاملة';
 }
 
-async function gsRequest(params) {
-  const res = await fetch(GSCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ ...params, token: SECRET_TOKEN }).toString()
-  });
+async function gsRequest(params, _try = 0) {
+  // أي طلب بيعلّق أكتر من 30 ثانية بيتلغي ويتعاد مرة — قبل كده الشاشة كانت بتفضل «جاري التحميل» على طول
+  const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), 30000) : null;
+  let res;
+  try {
+    res = await fetch(GSCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ ...params, token: SECRET_TOKEN }).toString(),
+      signal: ctl ? ctl.signal : undefined
+    });
+  } catch (e) {
+    if (_try < 1 && (params.action === 'get' || params.action === 'list')) { await new Promise(r => setTimeout(r, 800)); return gsRequest(params, _try + 1); }
+    throw new Error(e && e.name === 'AbortError' ? 'السيرفر اتأخر في الرد — جرّب «تحديث» تاني' : 'تعذر الاتصال بالسيرفر');
+  } finally { if (timer) clearTimeout(timer); }
   if (!res.ok) throw new Error('تعذر الاتصال بالسيرفر');
   const data = await res.json();
   if (!data.success && data.error && data.error !== 'not_found') throw new Error(data.error);
@@ -1674,6 +1684,22 @@ async function gsList(prefix) {
 // بديل لـ Promise.all(keys.map(gsGet)) — بيبعت الطلبات على دفعات صغيرة بدل ما يبعتها كلها مرة واحدة.
 // خادم Google Apps Script عنده حد أقصى للطلبات المتزامنة؛ لو بعتنا كتير مرة واحدة (زي 100+ مفتاح) بيرفض جزء منها
 // برسالة CORS مضلّلة (السبب الحقيقي زحمة مش قيود أمان). الدالة دي كمان بتعيد محاولة أي طلب فشل قبل ما تستسلم عليه.
+// مفاتيح فترة كاملة في طلب واحد (بدل طلب لكل يوم — 27 طلب مرة واحدة كانوا بيزحموا السيرفر ويعلّقوا الشاشة)
+async function gsListDates(base, dates) {
+  const want = new Set(dates);
+  if (dates.length > 2) {
+    try {
+      const r = await gsList(`${base}:`);
+      return (r.keys || []).filter(k => want.has(String(k).split(':')[1]));
+    } catch (e) { /* نرجع للطريقة القديمة على دفعات صغيرة */ }
+  }
+  const out = [];
+  for (let i = 0; i < dates.length; i += 5) {
+    const part = await Promise.all(dates.slice(i, i + 5).map(d => gsList(`${base}:${d}:`).then(r => r.keys || []).catch(() => [])));
+    part.forEach(k => out.push(...k));
+  }
+  return out;
+}
 async function gsGetBatch(keys, batchSize = 12, retries = 2) {
   const results = new Array(keys.length).fill(null);
   for (let i = 0; i < keys.length; i += batchSize) {
@@ -2242,12 +2268,13 @@ async function loadNewItemsReview() {
   const found = {}; // name -> {name, unit, category, branches:Set, dates:Set}
 
   try {
-    const listResults = await Promise.all(dates.map(date => gsList(`inv_count:${date}:`).then(r => ({ date, keys: r.keys || [] })).catch(() => ({ date, keys: [] }))));
+    const __ck = await gsListDates('inv_count', dates);
+    const listResults = dates.map(date => ({ date, keys: __ck.filter(k => String(k).split(':')[1] === date) }));
     const allFetches = [];
     listResults.forEach(({ date, keys }) => {
       keys.forEach(k => allFetches.push({ date, k }));
     });
-    const results = await Promise.all(allFetches.map(({ k }) => gsGet(k).catch(() => null)));
+    const results = await gsGetBatch(allFetches.map(({ k }) => k));
     results.forEach((res, i) => {
       if (!res || !res.value) return;
       const { date } = allFetches[i];
@@ -2385,7 +2412,7 @@ async function loadDeleteRecordsList() {
       }));
       lastDeleteRecordsList = rows;
     } else if (type === 'inv_factory_order') {
-      const listResults = await Promise.all(dates.map(date => gsList(`inv_factory_order:${date}:`).then(r => r.keys || []).catch(() => [])));
+      const listResults = [await gsListDates('inv_factory_order', dates)];
       const keys = listResults.flat();
       const rows = [];
       const results = await gsGetBatch(keys);
@@ -2398,7 +2425,7 @@ async function loadDeleteRecordsList() {
       });
       lastDeleteRecordsList = rows;
     } else if (type === 'inv_transfer') {
-      const listResults = await Promise.all(dates.map(date => gsList(`inv_transfer:${date}:`).then(r => r.keys || []).catch(() => [])));
+      const listResults = [await gsListDates('inv_transfer', dates)];
       const keys = listResults.flat();
       const rows = [];
       const results = await gsGetBatch(keys);
@@ -2411,7 +2438,7 @@ async function loadDeleteRecordsList() {
       });
       lastDeleteRecordsList = rows;
     } else {
-      const listResults = await Promise.all(dates.map(date => gsList(`${type}:${date}:`).then(r => r.keys || []).catch(() => [])));
+      const listResults = [await gsListDates(type, dates)];
       const keys = listResults.flat();
       const rows = [];
       const results = await gsGetBatch(keys);
@@ -4345,7 +4372,7 @@ async function loadIncomingTransfers() {
   const dates = dateRangeList(fromDate, todayStr());
   const incoming = {};
   try {
-    const listResults = await Promise.all(dates.map(date => gsList(`inv_transfer:${date}:`).then(r => r.keys || []).catch(() => [])));
+    const listResults = [await gsListDates('inv_transfer', dates)];
     const allKeys = listResults.flat();
     const results = await gsGetBatch(allKeys);
     results.forEach((res, i) => {
@@ -4802,7 +4829,7 @@ async function loadWasteAdminView() {
   const dates = dateRangeList(from, to);
   const submitted = {};
   try {
-    const listResults = await Promise.all(dates.map(date => gsList(`inv_waste:${date}:`).then(r => r.keys || []).catch(() => [])));
+    const listResults = [await gsListDates('inv_waste', dates)];
     const allKeys = listResults.flat();
     const results = await gsGetBatch(allKeys);
     results.forEach((res, i) => {
@@ -5167,7 +5194,7 @@ async function loadTransfersAdminView() {
   const dates = dateRangeList(from, to);
   const submitted = {};
   try {
-    const listResults = await Promise.all(dates.map(date => gsList(`inv_transfer:${date}:`).then(r => r.keys || []).catch(() => [])));
+    const listResults = [await gsListDates('inv_transfer', dates)];
     const allKeys = listResults.flat();
     const results = await gsGetBatch(allKeys);
     results.forEach((res, i) => {
@@ -5583,7 +5610,7 @@ async function loadFactoryOrdersAdminView() {
   const dates = dateRangeList(from, to);
   const submitted = {};
   try {
-    const listResults = await Promise.all(dates.map(date => gsList(`inv_factory_order:${date}:`).then(r => r.keys || []).catch(() => [])));
+    const listResults = [await gsListDates('inv_factory_order', dates)];
     const allKeys = listResults.flat();
     const results = await gsGetBatch(allKeys);
     results.forEach((res, i) => {
