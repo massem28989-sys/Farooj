@@ -481,13 +481,20 @@
           <label>التصنيفات اللي هتظهر في الورقة وترتيبها</label>
           <p class="muted" style="margin:4px 0 8px; font-size:12.5px;">شيل علامة الصح عن أي تصنيف مش عايزه، واستخدم ▲▼ لترتيبهم زي ما بتعد في الفرع بالظبط. الإعدادات بتتحفظ تلقائي.</p>
           <div id="printBlankCategoryChipsWrap"></div>
-          <div class="row" style="grid-template-columns: 1fr 1fr; margin-top:10px;">
+          <div class="row" style="grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); margin-top:10px;">
             <div>
               <label>عدد الخانات الفاضية لكل صنف</label>
               <select id="printBlankCols">
                 <option value="1">خانة واحدة (الكمية)</option>
                 <option value="2" selected>خانتين (ثلاجة / مخزن)</option>
                 <option value="3">3 خانات</option>
+              </select>
+            </div>
+            <div>
+              <label>ترتيب الأصناف في الورقة</label>
+              <select id="printBlankOrder">
+                <option value="screen" selected>زي شاشة «تسجيل جرد الفرع» بالظبط</option>
+                <option value="cats">مقسّمة بالتصنيفات (بالترتيب اللي فوق)</option>
               </select>
             </div>
             <div>
@@ -1299,7 +1306,7 @@
 const GSCRIPT_URL = "https://script.google.com/macros/s/AKfycbyMNYT0w8XeiPSXW9_of3gA7fyS6EqCw842-YA5MfVMRdppDbkz_w5Wr9xZCviXSaJw/exec";
 const SECRET_TOKEN = "B_pS9joBTY2q0lCXopjE5xMegt4fCEl9sTsyNqSGFI0"; // لازم يطابق نفس الكود في Code.gs
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '27-10 · 21:30'; // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '31-10 · 01:30'; // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = "Moustafa"; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = { admin: "Moustafa", manage: "Moustafa", users: "Moustafa", cost: "Moustafa", newItems: "Moustafa", wasteAdmin: "Moustafa", deleteRecords: "Moustafa", editRequests: "Moustafa", transfersAdmin: "Moustafa", factoryOrdersAdmin: "Moustafa" };
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -4582,7 +4589,10 @@ function printBlankInventorySheet() {
     </tr>`; }).join('');
 
   let body = '';
-  order.forEach(main => {
+  const orderMode = (document.getElementById('printBlankOrder')||{value:'screen'}).value;
+  // «زي الشاشة»: نفس ترتيب الأصناف في شاشة تسجيل الجرد (ترتيب الكتالوج) ونفس الترقيم — عشان اللي بيعدّ ينقل من الورقة للشاشة سطر بسطر
+  if (orderMode === 'screen') body = rowsFor(filtered);
+  else order.forEach(main => {
     const g = groups[main];
     const count = g.direct.length + Object.values(g.subs).reduce((s, a) => s + a.length, 0);
     body += `<tr class="cat"><td colspan="${3 + colsN}">${main} <span class="cnt">(${count} صنف)</span></td></tr>`;
