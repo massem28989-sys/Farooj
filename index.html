@@ -1306,7 +1306,7 @@
 const GSCRIPT_URL = "https://script.google.com/macros/s/AKfycbyMNYT0w8XeiPSXW9_of3gA7fyS6EqCw842-YA5MfVMRdppDbkz_w5Wr9xZCviXSaJw/exec";
 const SECRET_TOKEN = "B_pS9joBTY2q0lCXopjE5xMegt4fCEl9sTsyNqSGFI0"; // لازم يطابق نفس الكود في Code.gs
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '31-10 · 01:30'; // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '02-11 · 01:45'; // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = "Moustafa"; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = { admin: "Moustafa", manage: "Moustafa", users: "Moustafa", cost: "Moustafa", newItems: "Moustafa", wasteAdmin: "Moustafa", deleteRecords: "Moustafa", editRequests: "Moustafa", transfersAdmin: "Moustafa", factoryOrdersAdmin: "Moustafa" };
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -2121,6 +2121,10 @@ function switchMainTab(tab) {
 }
 
 function switchTab(tab) {
+  if (currentUser && typeof branchTabs !== 'undefined' && branchTabs.some(t => t.id === tab) && tab !== 'receiveFactoryOrder' && receiptBlockActive()) {
+    renderReceiptEnforcement(tab); return;
+  }
+  if (currentUser && typeof branchTabs !== 'undefined' && branchTabs.some(t => t.id === tab)) { setTimeout(() => { renderReceiptEnforcement(tab); checkPendingReceipts(); }, 0); }
   const setDisplay = (id, val) => { const el = document.getElementById(id); if (el) el.style.display = val; };
   const toggleActive = (id, cond) => {
     const el = document.getElementById(id); if (el) el.classList.toggle('active', cond);
@@ -3405,10 +3409,12 @@ async function login() {
   if (!document.getElementById('wasteDate').value) { document.getElementById('wasteDate').value = todayStr(); }
   renderWasteGate();
   await loadDraftCount();
+  checkPendingReceipts(true);
 }
 
 function logout() {
   currentUser = null;
+  try { PENDING_RECEIPTS = { block: [], today: null, at: 0, branch: '' }; const ov = document.getElementById('receiptEnforceOverlay'); if (ov) ov.remove(); const bar = document.getElementById('receiptEnforceBar'); if (bar) bar.innerHTML = ''; } catch (e) {}
   document.getElementById('loginUsername').value = '';
   document.getElementById('loginPassword').value = '';
   document.getElementById('branchLoggedInContent').style.display = 'none';
@@ -3979,8 +3985,82 @@ function updateReceiveStatus(i, sentQty) {
 // علامة «الفرع شيّك واستلم» — بتتسجل مع كل تقرير استلام (كامل أو فيه فروق) عشان المصنع يعرف مين أكّد ومين لسه
 async function saveReceiptMark(date, result, nShort, nSurplus) {
   const mark = { branch: currentUser.branch, date, by: currentUser.username, at: new Date().toISOString(), result, nShort: nShort || 0, nSurplus: nSurplus || 0 };
-  try { return !!(await gsSet(`inv_factory_order_receipt:${date}:${slugify(currentUser.branch)}`, JSON.stringify(mark))); } catch (e) { return false; }
+  let ok = false;
+  try { ok = !!(await gsSet(`inv_factory_order_receipt:${date}:${slugify(currentUser.branch)}`, JSON.stringify(mark))); } catch (e) { ok = false; }
+  if (ok) { try { checkPendingReceipts(true); } catch (e) {} }
+  return ok;
 }
+
+// ===== إجبار الفرع على تأكيد استلام طلبيات المصنع =====
+// أي طلبية المصنع صرفها (فيها «sent») ليوم قبل النهارده ومفيش ليها تأكيد استلام ← الفرع مايقدرش يستخدم أي تبويب غير «تشييك الاستلام».
+// طلبية النهارده نفسها: تنبيه بس (البضاعة ممكن تكون لسه في الطريق).
+const RECEIPT_ENFORCE_FROM = '2026-11-01';
+const RECEIPT_LOOKBACK_DAYS = 5;
+let PENDING_RECEIPTS = { block: [], today: null, at: 0, branch: '' };
+function ymdAddDays(ymd, n) { const [y, m, d] = ymd.split('-').map(Number); const x = new Date(y, m - 1, d + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; }
+async function gsGetStrict(key) { // بيفرّق بين «مش موجود» (null) و«ماعرفناش» (throw)
+  const r = await gsRequest({ action: 'get', key });
+  if (r && r.success) return (r.value == null || r.value === '') ? null : r.value;
+  if (r && r.error === 'not_found') return null;
+  throw new Error('unknown');
+}
+let _pendingBusy = null;
+async function checkPendingReceipts(force) {
+  if (!currentUser || !currentUser.branch) return PENDING_RECEIPTS;
+  if (!force && PENDING_RECEIPTS.branch === currentUser.branch && Date.now() - PENDING_RECEIPTS.at < 90e3) return PENDING_RECEIPTS;
+  if (_pendingBusy) return _pendingBusy;
+  _pendingBusy = (async () => {
+    const br = currentUser.branch, slug = slugify(br), t = todayStr();
+    const dates = []; for (let i = 0; i <= RECEIPT_LOOKBACK_DAYS; i++) { const d = ymdAddDays(t, -i); if (d >= RECEIPT_ENFORCE_FROM) dates.push(d); }
+    const block = []; let today = null;
+    await Promise.all(dates.map(async d => {
+      let o; try { o = await gsGetStrict(`inv_factory_order:${d}:${slug}`); } catch (e) { return; }
+      if (!o) return; let data; try { data = JSON.parse(o); } catch (e) { return; }
+      if (!(data.items || []).some(it => it.sent != null)) return; // لسه ما اتصرفتش
+      let r; try { r = await gsGetStrict(`inv_factory_order_receipt:${d}:${slug}`); } catch (e) { return; } // ماعرفناش ← مانقفلش
+      if (r) return;
+      if (d === t) today = d; else block.push(d);
+    }));
+    if (!currentUser || currentUser.branch !== br) return PENDING_RECEIPTS;
+    PENDING_RECEIPTS = { block: block.sort(), today, at: Date.now(), branch: br };
+    renderReceiptEnforcement();
+    return PENDING_RECEIPTS;
+  })();
+  try { return await _pendingBusy; } finally { _pendingBusy = null; }
+}
+function receiptBlockActive() { return !!(currentUser && PENDING_RECEIPTS.branch === currentUser.branch && PENDING_RECEIPTS.block.length); }
+function renderReceiptEnforcement(currentTab) {
+  const host = document.getElementById('branchLoggedInContent'); if (!host) return;
+  let bar = document.getElementById('receiptEnforceBar');
+  if (!bar) { bar = document.createElement('div'); bar.id = 'receiptEnforceBar'; host.insertBefore(bar, host.firstChild); }
+  let ov = document.getElementById('receiptEnforceOverlay');
+  const P = PENDING_RECEIPTS, mine = currentUser && P.branch === currentUser.branch;
+  const tab = currentTab || (document.getElementById('receiveFactoryOrderView') && document.getElementById('receiveFactoryOrderView').style.display === 'block' ? 'receiveFactoryOrder' : '');
+  const fmtD = d => { const [y, m, dd] = d.split('-'); return `${dd}/${m}`; };
+  if (mine && P.block.length) {
+    bar.innerHTML = `<div style="background:#FDECEC;border:1px solid #E5A3A3;color:#8E1B1B;border-radius:10px;padding:10px 12px;margin:0 0 10px;font-size:14px">⛔ لازم تأكّد استلام طلبية المصنع ليوم ${P.block.map(fmtD).join('، ')} — باقي الشاشات مقفولة لحد ما تشيّك.</div>`;
+    if (tab !== 'receiveFactoryOrder') {
+      if (!ov) { ov = document.createElement('div'); ov.id = 'receiptEnforceOverlay'; document.body.appendChild(ov); }
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(30,10,10,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+      ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:420px;width:100%;padding:18px 18px 14px;box-shadow:0 10px 40px rgba(0,0,0,.3);text-align:right" dir="rtl">
+        <div style="font-size:18px;font-weight:800;color:#8E1B1B;margin-bottom:6px">⛔ طلبية المصنع مستنية تأكيد استلامك</div>
+        <div style="font-size:14px;color:#444;line-height:1.7;margin-bottom:12px">المصنع صرف طلبية فرع <b>${P.branch}</b> ومحدش أكّد استلامها على السيستم. لازم تشيّك على الكميات وتبعت تقرير الاستلام الأول — بعدها كل الشاشات هتفتح.</div>
+        ${P.block.map(d => `<button class="primary" style="width:100%;padding:12px;margin-bottom:8px;font-size:15px" onclick="goReceiveDate('${d}')">شيّك استلام طلبية ${fmtD(d)}</button>`).join('')}
+        <button class="ghost" style="width:100%;padding:9px;font-size:13px" onclick="logout()">خروج</button>
+      </div>`;
+    } else if (ov) ov.remove();
+  } else {
+    if (ov) ov.remove();
+    bar.innerHTML = (mine && P.today) ? `<div style="background:#FFF4E5;border:1px solid #F0C27B;color:#8A5300;border-radius:10px;padding:9px 12px;margin:0 0 10px;font-size:13.5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">🚚 المصنع صرف طلبية النهارده — أول ما توصل شيّك عليها وأكّد الاستلام. <button class="ghost" style="padding:4px 10px;font-size:12px" onclick="goReceiveDate('${P.today}')">شيّك دلوقتي</button></div>` : '';
+  }
+}
+function goReceiveDate(d) {
+  const el = document.getElementById('receiveFactoryOrderDate'); if (el) el.value = d;
+  const ov = document.getElementById('receiptEnforceOverlay'); if (ov) ov.remove();
+  switchTab('receiveFactoryOrder');
+}
+setInterval(() => { if (currentUser) checkPendingReceipts(); }, 5 * 60e3);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && currentUser) checkPendingReceipts(); });
 async function showReceiptMark(date) {
   const el = document.getElementById('receiptMarkInfo'); if (!el) return;
   el.innerHTML = '';
@@ -5633,6 +5713,13 @@ async function loadFactoryOrdersAdminView() {
   }
 
   lastFactoryOrdersData = submitted;
+  lastFactoryReceipts = {};
+  try {
+    const ks = Object.keys(submitted).filter(k => (submitted[k].items || []).some(it => it.sent != null));
+    const rks = ks.map(k => k.replace(/^inv_factory_order:/, 'inv_factory_order_receipt:'));
+    const rr = await gsGetBatch(rks);
+    rr.forEach((r, i) => { if (r && r.value) { try { lastFactoryReceipts[ks[i]] = JSON.parse(r.value); } catch (e) {} } });
+  } catch (e) {}
   document.getElementById('factoryOrderDetailCard').style.display = 'none';
   currentFactoryOrderDetailKey = null;
 
@@ -5645,17 +5732,31 @@ async function loadFactoryOrdersAdminView() {
   if (factoryOrdersSubTab === 'report') renderFactoryOrdersReport();
 }
 
+let lastFactoryReceipts = {};
+function factoryReceiptCell(k, d) {
+  const sent = (d.items || []).some(it => it.sent != null);
+  if (!sent) return '<span style="color:#888">لسه ما اتصرفتش</span>';
+  const m = lastFactoryReceipts[k];
+  if (m) return m.result === 'ok'
+    ? `<span style="color:#2E7D32">✓ استلم كامل</span><div class="muted" style="font-size:11px">${m.by || ''} · ${new Date(m.at).toLocaleString('ar-EG')}</div>`
+    : `<span style="color:#B36B00">⚠ استلم وفيه فروق</span><div class="muted" style="font-size:11px">${m.nShort ? m.nShort + ' ناقص' : ''}${m.nShort && m.nSurplus ? ' · ' : ''}${m.nSurplus ? m.nSurplus + ' زيادة' : ''} — ${m.by || ''}</div>`;
+  const days = Math.round((new Date(todayStr()) - new Date(d.date)) / 864e5);
+  return `<b style="color:#A32D2D">✗ ما أكّدش الاستلام</b>${days > 0 ? `<div style="font-size:11px;color:#A32D2D">متأخر ${days} يوم</div>` : ''}`;
+}
 function renderFactoryOrdersList() {
   const wrap = document.getElementById('factoryOrdersListWrap');
   const keys = Object.keys(lastFactoryOrdersData).sort((a, b) => new Date(lastFactoryOrdersData[b].submittedAt) - new Date(lastFactoryOrdersData[a].submittedAt));
   if (keys.length === 0) { wrap.innerHTML = '<p class="empty">مفيش أي طلبيات مسجلة في الفترة دي.</p>'; return; }
 
-  let html = '<table><thead><tr><th>الفرع</th><th>التاريخ</th><th>عدد الأصناف</th><th>وقت الإرسال</th><th></th></tr></thead><tbody>';
+  const late = keys.filter(k => (lastFactoryOrdersData[k].items || []).some(it => it.sent != null) && !lastFactoryReceipts[k]);
+  let html = late.length ? `<p style="background:#FDECEC;border:1px solid #E5A3A3;color:#8E1B1B;border-radius:8px;padding:8px 10px;font-size:13.5px">✗ <b>${late.length}</b> طلبية اتصرفت ولسه الفرع ما أكّدش استلامها: ${[...new Set(late.map(k => lastFactoryOrdersData[k].branch))].join('، ')}</p>` : '';
+  html += '<table><thead><tr><th>الفرع</th><th>التاريخ</th><th>عدد الأصناف</th><th>وقت الإرسال</th><th>استلام الفرع</th><th></th></tr></thead><tbody>';
   keys.forEach(k => {
     const d = lastFactoryOrdersData[k];
     html += `<tr>
       <td>${d.branch}</td><td>${d.date}</td><td>${d.items.length}</td>
       <td style="font-size:12px;">${new Date(d.submittedAt).toLocaleString('ar-EG')}</td>
+      <td style="font-size:12.5px;">${factoryReceiptCell(k, d)}</td>
       <td><button class="link-btn" onclick="showFactoryOrderDetail('${k.replace(/'/g, "\\'")}')">عرض التفاصيل</button></td>
     </tr>`;
   });
@@ -7171,9 +7272,12 @@ function renderBranchDetailView() {
   if (!editingBranchInvoice) {
     editBtn.textContent = 'تعديل الجرد';
     printBtn.style.display = 'inline-block';
-    let html = `<p class="muted">تاريخ الجرد: ${data.date} — القائم بالجرد: ${data.counter || '-'} — وقت الإرسال: ${new Date(data.submittedAt).toLocaleString('ar-EG')}</p>`;
+    const _ts = data.submittedAt || data.savedAt; const _tsD = _ts ? new Date(_ts) : null;
+    const _tot = (data.totalValue!==undefined && data.totalValue!==null && data.totalValue!=='') ? data.totalValue : Math.round((data.items||[]).reduce((s,it)=>s+(+it.qty||0)*(+it.price||0),0)*100)/100;
+    let html = `<p class="muted">تاريخ الجرد: ${data.date||'-'} — القائم بالجرد: ${data.counter || '-'} — وقت الإرسال: ${_tsD && !isNaN(_tsD) ? _tsD.toLocaleString('ar-EG') : '-'}</p>`;
+    if(!data.submittedAt) html += `<p style="background:#FFF4E5;border:1px solid #F0C27B;border-radius:8px;padding:8px 10px;color:#8A5300;font-size:13px">⚠️ ده <b>مسودة حفظ تلقائي</b> من جهاز الفرع${data.savedAt?` (آخر حفظ ${new Date(data.savedAt).toLocaleString('ar-EG')})`:''} — مش جرد اتبعت بزرار الإرسال. اتأكد مع الفرع إنه خلّص العد، وبعدين صلّحه من «فحص سلامة الجرد» ← «🔧 صلّح الناقص».</p>`;
     html += buildGroupedItemsTableHtml(data.items);
-    html += `<table style="margin-top:6px;"><tbody><tr style="font-weight:700; background:#FFF6EE;"><td style="width:40%;">الإجمالي الكلي</td><td colspan="3"></td><td class="num">${data.totalValue}</td></tr></tbody></table>`;
+    html += `<table style="margin-top:6px;"><tbody><tr style="font-weight:700; background:#FFF6EE;"><td style="width:40%;">الإجمالي الكلي</td><td colspan="3"></td><td class="num">${_tot}</td></tr></tbody></table>`;
     document.getElementById('branchDetailWrap').innerHTML = html;
   } else {
     editBtn.textContent = 'إلغاء التعديل';
