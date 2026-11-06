@@ -1201,7 +1201,7 @@
         <div class="card" id="systemCostResultCard" style="display:none;">
           <div class="row" style="grid-template-columns: 1fr auto; align-items:center; margin-bottom:0;">
             <h2 style="margin:0;">التكلفة النهائية (جرد + سيستم)</h2>
-            <button class="ghost" onclick="exportFinalCostToExcel()">تصدير Excel</button>
+            <div style="display:flex;gap:6px;"><button class="ghost" onclick="openBranchOrder()">↕ ترتيب الفروع</button><button class="ghost" onclick="exportFinalCostToExcel()">تصدير Excel</button></div>
           </div>
           <p class="muted" style="margin-top:8px;">تعبئة (تكلفة) = تعبئة + استهلاكية من السيستم — وغاز مصروف مباشر بدون جرد</p>
           <div id="systemCostWrap" style="margin-top:10px; overflow-x:auto;"></div>
@@ -1327,7 +1327,7 @@
 const GSCRIPT_URL = "https://script.google.com/macros/s/AKfycbyMNYT0w8XeiPSXW9_of3gA7fyS6EqCw842-YA5MfVMRdppDbkz_w5Wr9xZCviXSaJw/exec";
 const SECRET_TOKEN = "B_pS9joBTY2q0lCXopjE5xMegt4fCEl9sTsyNqSGFI0"; // لازم يطابق نفس الكود في Code.gs
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '06-11 · 14:30'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '06-11 · 15:45'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = "Moustafa"; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = { admin: "Moustafa", manage: "Moustafa", users: "Moustafa", cost: "Moustafa", newItems: "Moustafa", wasteAdmin: "Moustafa", deleteRecords: "Moustafa", editRequests: "Moustafa", transfersAdmin: "Moustafa", factoryOrdersAdmin: "Moustafa" };
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -2807,7 +2807,8 @@ async function loadInventoryCostTab() {
       };
     }));
 
-    lastInventoryCost = results;
+    await loadBranchOrder();
+    lastInventoryCost = sortByBranchOrder(results, r => r.branch);
     hint.textContent = '';
     resultCard.style.display = 'block';
     renderInventoryCostTable();
@@ -2904,8 +2905,50 @@ async function importSystemExcel() {
   }
 }
 
+
+/* ===== ↕ ترتيب الفروع في تقارير التكلفة — بيتحفظ على السيرفر للكل ===== */
+const BRANCH_ORDER_DEFAULT = ['FAE - Al Satwa','FAE - Al Warqa 1','FAE - Corniche','FAE - Abu Dhabi (Al Nahyaan)','FAE - Samnan','FAE - Al Fujairah','FAE- Ajman (Sheikh Ammar )','FAE - Al Khawaneej 2 (Dubai)','FAE - Al Barsha','FAE - Ras Al Khaiymaa','FAE - Al jimi','FAE - Al Shahama','FAE - Ni’mah','FAE - Al Shamkha','FAE - Business Bay','FAE- Al Foursan Mall','FAE - Khor Fakkan','FAE - Downtown','FAE - AL Yahr','FAE - Festival land','FAE - Al sajaa','FAE - DHK Shamkha'];
+let BRANCH_ORDER = null;
+const _bn = x => String(x || '').toLowerCase().replace(/[’'`]/g, '').replace(/[\s\-()]+/g, '');
+async function loadBranchOrder() {
+  if (BRANCH_ORDER) return BRANCH_ORDER;
+  try { const r = await gsGet('inv_settings:branchOrder'); if (r && r.value) BRANCH_ORDER = JSON.parse(r.value); } catch (e) {}
+  if (!Array.isArray(BRANCH_ORDER) || !BRANCH_ORDER.length) BRANCH_ORDER = BRANCH_ORDER_DEFAULT.slice();
+  return BRANCH_ORDER;
+}
+function branchRank(name) { const L = (BRANCH_ORDER || BRANCH_ORDER_DEFAULT).map(_bn); const i = L.indexOf(_bn(name)); return i === -1 ? 999 : i; }
+function sortByBranchOrder(arr, key) { return arr.slice().sort((a, b) => branchRank(key(a)) - branchRank(key(b))); }
+async function openBranchOrder() {
+  if (adminAccessLevel !== 'full') { alert('ترتيب الفروع لصاحب النظام بس'); return; }
+  await loadBranchOrder();
+  const names = BRANCHES.map(b => b.name);
+  let list = sortByBranchOrder(names, x => x);
+  const ov = document.createElement('div'); ov.id = 'boOv';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(30,10,10,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  const draw = () => {
+    ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:460px;width:100%;max-height:86vh;display:flex;flex-direction:column;overflow:hidden">
+      <div style="padding:14px 16px;border-bottom:1px solid #eee"><b>↕ ترتيب الفروع</b><div class="muted" style="font-size:12px;margin-top:4px">الترتيب ده بيتطبق على جدول التكلفة وملف الإكسل، وبيتحفظ للكل.</div></div>
+      <div style="overflow:auto;padding:8px 12px;flex:1">${list.map((n, i) => `<div style="display:flex;align-items:center;gap:6px;padding:5px 4px;border-bottom:1px solid #f3f3f3">
+        <span style="width:24px;color:#999;font-size:12px">${i + 1}</span><span style="flex:1">${n}</span>
+        <button class="ghost" style="padding:2px 9px" data-u="${i}" ${i ? '' : 'disabled'}>▲</button><button class="ghost" style="padding:2px 9px" data-d="${i}" ${i < list.length - 1 ? '' : 'disabled'}>▼</button></div>`).join('')}</div>
+      <div style="padding:12px 16px;border-top:1px solid #eee;display:flex;gap:8px;justify-content:flex-end"><button class="ghost" data-x="1">إلغاء</button><button class="primary" data-s="1">حفظ</button></div></div>`;
+  };
+  ov.addEventListener('click', async e => {
+    const t = e.target.closest('button'); if (!t) { if (e.target === ov) ov.remove(); return; }
+    if (t.dataset.u) { const i = +t.dataset.u; [list[i - 1], list[i]] = [list[i], list[i - 1]]; draw(); }
+    else if (t.dataset.d) { const i = +t.dataset.d; [list[i + 1], list[i]] = [list[i], list[i + 1]]; draw(); }
+    else if (t.dataset.x) ov.remove();
+    else if (t.dataset.s) { t.disabled = true; t.textContent = 'جاري الحفظ...';
+      try { await gsSet('inv_settings:branchOrder', JSON.stringify(list)); BRANCH_ORDER = list.slice(); ov.remove();
+        try { if (lastInventoryCost.length) renderInventoryCostTable(); } catch (e2) {}
+        try { if (document.getElementById('systemCostResultCard').style.display !== 'none') renderFinalCostTable(); } catch (e2) {}
+      } catch (err) { alert('ماتحفظش — جرب تاني'); t.disabled = false; t.textContent = 'حفظ'; } }
+  });
+  draw(); document.body.appendChild(ov);
+}
+
 function computeFinalCostRows() {
-  return lastInventoryCost.map(inv => {
+  return sortByBranchOrder(lastInventoryCost, r => r.branch).map(inv => {
     const sys = lastSystemData[inv.branch] || { sales: 0, raw: 0, packaging: 0, consumables: 0, gas: 0 };
     const costRaw = inv['أولية'].opening + sys.raw - inv['أولية'].closing;
     const costPackaging = inv['تعبئة'].opening + (sys.packaging + sys.consumables) - inv['تعبئة'].closing;
