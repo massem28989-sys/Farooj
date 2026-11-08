@@ -1327,7 +1327,7 @@
 const GSCRIPT_URL = "https://script.google.com/macros/s/AKfycbyMNYT0w8XeiPSXW9_of3gA7fyS6EqCw842-YA5MfVMRdppDbkz_w5Wr9xZCviXSaJw/exec";
 const SECRET_TOKEN = "B_pS9joBTY2q0lCXopjE5xMegt4fCEl9sTsyNqSGFI0"; // لازم يطابق نفس الكود في Code.gs
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '08-11 · 11:10'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '08-11 · 11:20'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = "Moustafa"; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = { admin: "Moustafa", manage: "Moustafa", users: "Moustafa", cost: "Moustafa", newItems: "Moustafa", wasteAdmin: "Moustafa", deleteRecords: "Moustafa", editRequests: "Moustafa", transfersAdmin: "Moustafa", factoryOrdersAdmin: "Moustafa" };
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -4132,7 +4132,9 @@ async function checkPendingReceipts(force) {
     await Promise.all(dates.map(async d => {
       let o; try { o = await gsGetStrict(`inv_factory_order:${d}:${slug}`); } catch (e) { return; }
       if (!o) return; let data; try { data = JSON.parse(o); } catch (e) { return; }
-      if (!(data.items || []).some(it => it.sent != null)) return; // لسه ما اتصرفتش
+      // الطلبية بتتصرف في نفس يومها: أي طلبية من يوم فات تعتبر اتصرفت حتى لو المصنع ما كتبش «sent» فيها
+      // (قبل كده لو أسعار الصرف ما اتكتبتش في الطلبية، الفرع كان بيعدّي من غير ما يأكّد ويطلب تاني يوم عادي)
+      if (d === t && !(data.items || []).some(it => it.sent != null)) return; // طلبية النهارده لسه ما اتصرفتش
       let r; try { r = await gsGetStrict(`inv_factory_order_receipt:${d}:${slug}`); } catch (e) { return; } // ماعرفناش ← مانقفلش
       if (r) return;
       if (d === t) today = d; else block.push(d);
