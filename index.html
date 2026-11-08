@@ -1327,7 +1327,7 @@
 const GSCRIPT_URL = "https://script.google.com/macros/s/AKfycbyMNYT0w8XeiPSXW9_of3gA7fyS6EqCw842-YA5MfVMRdppDbkz_w5Wr9xZCviXSaJw/exec";
 const SECRET_TOKEN = "B_pS9joBTY2q0lCXopjE5xMegt4fCEl9sTsyNqSGFI0"; // لازم يطابق نفس الكود في Code.gs
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '06-11 · 15:45'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '08-11 · 11:10'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = "Moustafa"; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = { admin: "Moustafa", manage: "Moustafa", users: "Moustafa", cost: "Moustafa", newItems: "Moustafa", wasteAdmin: "Moustafa", deleteRecords: "Moustafa", editRequests: "Moustafa", transfersAdmin: "Moustafa", factoryOrdersAdmin: "Moustafa" };
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -1689,6 +1689,7 @@ async function gsRequest(params, _try = 0) {
   } finally { if (timer) clearTimeout(timer); }
   if (!res.ok) throw new Error('تعذر الاتصال بالسيرفر');
   const data = await res.json();
+  if (!data.success && data.error === 'busy' && _try < 4) { await new Promise(r => setTimeout(r, 1500 * (_try + 1))); return gsRequest(params, _try + 1); }
   if (!data.success && data.error && data.error !== 'not_found') throw new Error(data.error);
   return data;
 }
@@ -1955,6 +1956,11 @@ let editRequests = [];
 
 function slugify(str) {
   return str.replace(/\s+/g, '_').replace(/["'\/\\]/g, '');
+}
+const ORDER_DAY_CUTOFF_HOUR = 0; // الطلبيات بتتبعت بعد نص الليل وبتتصرف في نفس اليوم — يوم الطلبية = تاريخ الساعة
+function orderDayStr() {
+  const d = new Date(); if (d.getHours() < ORDER_DAY_CUTOFF_HOUR) d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 function todayStr() {
   const d = new Date();
@@ -3938,7 +3944,7 @@ let factoryOrderSubCategory = 'الكل';
 function renderFactoryOrderGate() {
   if (!currentUser) return;
   document.getElementById('factoryOrderBranchDisplay').value = currentUser.branch;
-  if (!document.getElementById('factoryOrderDate').value) { document.getElementById('factoryOrderDate').value = todayStr(); }
+  document.getElementById('factoryOrderDate').value = orderDayStr();
   renderFactoryOrderCategoryChips();
   renderFactoryOrderItemPicker();
   renderFactoryOrderItems();
@@ -3950,7 +3956,7 @@ async function loadSentFactoryOrder() {
   if (!currentUser) return;
   const card = document.getElementById('sentFactoryOrderCard');
   const wrap = document.getElementById('sentFactoryOrderWrap');
-  const date = todayStr();
+  const date = orderDayStr();
   const key = `inv_factory_order:${date}:${slugify(currentUser.branch)}`;
   try {
     const res = await gsGet(key);
@@ -4300,7 +4306,7 @@ async function submitFactoryOrderChangeRequest() {
   const note = noteEl.value.trim();
   if (!note) { hint.textContent = 'اكتب التعديل المطلوب الأول.'; hint.style.color = '#A32D2D'; return; }
 
-  const date = todayStr();
+  const date = orderDayStr();
   const id = Date.now();
   const req = { id, branch: currentUser.branch, date, note, requestedBy: currentUser.username, status: 'pending', createdAt: new Date().toISOString() };
   // منع التكرار: الإرسال بياخد كام ثانية — الزرار بيتقفل لحد ما يخلص، ولو نفس الطلب اتبعت قبل كده ما يتبعتش تاني
@@ -4344,7 +4350,7 @@ async function loadMyFactoryChangeRequests() {
   try {
     const res = await gsGet('inv_factory_order_change:index');
     const index = (res && res.value) ? JSON.parse(res.value) : [];
-    const mine = index.filter(r => r.branch === currentUser.branch && r.date === todayStr());
+    const mine = index.filter(r => r.branch === currentUser.branch && r.date === orderDayStr());
     if (mine.length === 0) { wrap.innerHTML = ''; return; }
     const labels = { pending: 'مستلم عند المصنع', done: 'المصنع عدّلها', rejected: 'المصنع رفضها' };
     let html = '<p class="muted" style="margin:0 0 6px;">طلبات التعديل اللي بعتها النهاردة:</p>';
@@ -4516,7 +4522,7 @@ async function submitFactoryOrder() {
   if (!confirm(confirmMsg)) return;
 
   btn.disabled = true; btn.textContent = 'جاري التحقق...';
-  const date = todayStr(); // تاريخ لحظة الإرسال الفعلية
+  const date = orderDayStr(); // يوم الطلبية = تاريخ لحظة الإرسال
   const key = `inv_factory_order:${date}:${slugify(branch)}`;
 
   try {
