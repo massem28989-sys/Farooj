@@ -1325,11 +1325,25 @@
 
 <script>
 const GSCRIPT_URL = "https://script.google.com/macros/s/AKfycbyMNYT0w8XeiPSXW9_of3gA7fyS6EqCw842-YA5MfVMRdppDbkz_w5Wr9xZCviXSaJw/exec";
-const SECRET_TOKEN = "B_pS9joBTY2q0lCXopjE5xMegt4fCEl9sTsyNqSGFI0"; // لازم يطابق نفس الكود في Code.gs
+// 🔐 مفيش كود سري هنا: الدخول بيتأكد على السيرفر، وبيرجّع «جلسة» بتتبعت مع كل طلب
+let GS_SESSION = null; try { GS_SESSION = localStorage.getItem('brSession') || null; } catch (e) {}
+function setSession(s) { GS_SESSION = s || null; try { if (s) localStorage.setItem('brSession', s); else localStorage.removeItem('brSession'); } catch (e) {} }
+async function serverLogin(params) {
+  const res = await fetch(GSCRIPT_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ action: 'login', ...params }).toString() });
+  if (!res.ok) throw new Error('تعذر الاتصال بالسيرفر');
+  const d = await res.json(); if (d && d.success && d.session) setSession(d.session); return d;
+}
+// شاشات الإدارة: كلمة السر بتتأكد على السيرفر الأول، وبعدين بنحمّل الإعدادات الحقيقية
+async function secAuth(section, password, errEl) {
+  try { const r = await serverLogin({ kind: 'sec', section, password }); if (!r.success) { if (errEl) errEl.style.display = 'block'; return false; } }
+  catch (e) { alert(e.message || 'تعذر الاتصال بالسيرفر'); return false; }
+  try { await Promise.all([loadSettings(), loadUsers(), loadOperationUsers()]); } catch (e) {}
+  return true;
+}
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '08-11 · 11:20'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
-let currentAdminPassword = "Moustafa"; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
-let sectionPasswords = { admin: "Moustafa", manage: "Moustafa", users: "Moustafa", cost: "Moustafa", newItems: "Moustafa", wasteAdmin: "Moustafa", deleteRecords: "Moustafa", editRequests: "Moustafa", transfersAdmin: "Moustafa", factoryOrdersAdmin: "Moustafa" };
+window.__BUILD__ = '10-11 · 14:30'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+let currentAdminPassword = ""; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
+let sectionPasswords = {};
 let operationUsers = []; // [{ username, password, branches: [] }]
 let currentOperationUser = null;
 let adminAccessLevel = 'full'; // 'full' أو 'operation' - بيتحدد وقت الدخول على لوحة الجرد
@@ -1680,7 +1694,7 @@ async function gsRequest(params, _try = 0) {
     res = await fetch(GSCRIPT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ ...params, token: SECRET_TOKEN }).toString(),
+      body: new URLSearchParams({ ...params, ...(GS_SESSION ? { session: GS_SESSION } : {}) }).toString(),
       signal: ctl ? ctl.signal : undefined
     });
   } catch (e) {
@@ -1690,7 +1704,8 @@ async function gsRequest(params, _try = 0) {
   if (!res.ok) throw new Error('تعذر الاتصال بالسيرفر');
   const data = await res.json();
   if (!data.success && data.error === 'busy' && _try < 4) { await new Promise(r => setTimeout(r, 1500 * (_try + 1))); return gsRequest(params, _try + 1); }
-  if (!data.success && data.error && data.error !== 'not_found') throw new Error(data.error);
+  if (!data.success && data.error === 'unauthorized' && GS_SESSION) { setSession(null); if (!window.__sessExpiredShown) { window.__sessExpiredShown = true; setTimeout(() => { alert('انتهت جلسة الدخول — ادخل تاني باسم المستخدم وكلمة السر'); try { logout(); } catch (e) {} window.__sessExpiredShown = false; }, 50); } }
+  if (!data.success && data.error && data.error !== 'not_found') throw new Error(data.error === 'unauthorized' ? 'محتاج تسجّل دخول الأول' : data.error);
   return data;
 }
 async function gsSet(key, valueStr) {
@@ -2287,7 +2302,8 @@ function renderNewItemsGate() {
   }
 }
 
-function unlockNewItems() {
+async function unlockNewItems() {
+  if (!(await secAuth('newItems', document.getElementById('newItemsPasswordInput').value, document.getElementById('newItemsPasswordError')))) return;
   const val = document.getElementById('newItemsPasswordInput').value;
   const err = document.getElementById('newItemsPasswordError');
   if (val === sectionPasswords.newItems) {
@@ -2432,7 +2448,8 @@ function renderDeleteRecordsGate() {
   }
 }
 
-function unlockDeleteRecords() {
+async function unlockDeleteRecords() {
+  if (!(await secAuth('deleteRecords', document.getElementById('deleteRecordsPasswordInput').value, document.getElementById('deleteRecordsPasswordError')))) return;
   const val = document.getElementById('deleteRecordsPasswordInput').value;
   const err = document.getElementById('deleteRecordsPasswordError');
   if (val === sectionPasswords.deleteRecords) {
@@ -2734,7 +2751,8 @@ function renderCostGate() {
   }
 }
 
-function unlockCost() {
+async function unlockCost() {
+  if (!(await secAuth('cost', document.getElementById('costPasswordInput').value, document.getElementById('costPasswordError')))) return;
   const val = document.getElementById('costPasswordInput').value;
   const err = document.getElementById('costPasswordError');
   if (val === sectionPasswords.cost) {
@@ -3015,7 +3033,7 @@ async function loadSettings() {
     console.error('loadSettings failed, keeping default without overwriting server:', e);
   }
   if (res && res.value) { currentAdminPassword = res.value; }
-  else { try { await gsSet('inv_settings:password', currentAdminPassword); } catch (e) {} }
+  else if (currentAdminPassword) { try { await gsSet('inv_settings:password', currentAdminPassword); } catch (e) {} }
 
   let secRes = null;
   try {
@@ -3029,6 +3047,7 @@ async function loadSettings() {
     return;
   }
   // ترحيل تلقائي: لو مفيش باسوردات منفصلة لسه، استخدم الباسورد القديم المشترك لكل الشاشات كبداية
+  if (!currentAdminPassword) return;
   sectionPasswords = { admin: currentAdminPassword, manage: currentAdminPassword, users: currentAdminPassword, cost: currentAdminPassword, newItems: currentAdminPassword };
   try { await gsSet('inv_settings:sectionPasswords', JSON.stringify(sectionPasswords)); } catch (e) {}
 }
@@ -3044,7 +3063,7 @@ async function loadOperationUsers() {
   let res = null;
   try { res = await gsGet('inv_settings:operationUsers'); } catch (e) { return; }
   if (res && res.value) { operationUsers = JSON.parse(res.value); return; }
-  try { await gsSet('inv_settings:operationUsers', JSON.stringify(operationUsers)); } catch (e) {}
+  // ما نكتبش قايمة فاضية فوق القايمة الحقيقية
 }
 
 async function saveOperationUsers() {
@@ -3202,7 +3221,8 @@ async function saveSectionPassword(key) {
   }
 }
 
-function unlockSettings() {
+async function unlockSettings() {
+  if (!(await secAuth('settings', document.getElementById('settingsPasswordInput').value, document.getElementById('settingsPasswordError')))) return;
   const val = document.getElementById('settingsPasswordInput').value;
   const err = document.getElementById('settingsPasswordError');
   if (val === currentAdminPassword) {
@@ -3363,7 +3383,8 @@ function renderBranchesList() {
   wrap.innerHTML = html;
 }
 
-function unlockUsers() {
+async function unlockUsers() {
+  if (!(await secAuth('users', document.getElementById('usersPasswordInput').value, document.getElementById('usersPasswordError')))) return;
   const val = document.getElementById('usersPasswordInput').value;
   const err = document.getElementById('usersPasswordError');
   if (val === sectionPasswords.users) {
@@ -3491,9 +3512,11 @@ async function login() {
   const password = document.getElementById('loginPassword').value;
   const err = document.getElementById('loginError');
 
-  if (usersList.length === 0) { await loadUsers(); }
-  const user = usersList.find(u => u.username === username && u.password === password);
+  let user = null;
+  try { const r = await serverLogin({ kind: 'user', username, password }); if (r && r.success) user = r.user; }
+  catch (e) { alert(e.message || 'تعذر الاتصال بالسيرفر'); return; }
   if (!user) { err.style.display = 'block'; return; }
+  try { await Promise.all([loadUsers(), loadOperationUsers()]); populateOperationUserSelect(); populateWasteOperationUserSelect(); } catch (e) {}
 
   err.style.display = 'none';
   currentUser = user;
@@ -3513,6 +3536,8 @@ async function login() {
 }
 
 function logout() {
+  try { if (GS_SESSION) fetch(GSCRIPT_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ action: 'logout', session: GS_SESSION }).toString() }).catch(() => {}); } catch (e) {}
+  setSession(null);
   try { leaveQualityMode(); } catch (e) {}
   currentUser = null;
   try { PENDING_RECEIPTS = { block: [], today: null, at: 0, branch: '' }; const ov = document.getElementById('receiptEnforceOverlay'); if (ov) ov.remove(); const bar = document.getElementById('receiptEnforceBar'); if (bar) bar.innerHTML = ''; } catch (e) {}
@@ -5041,7 +5066,8 @@ async function saveDirectEdit() {
   }
 }
 
-function unlockEditRequests() {
+async function unlockEditRequests() {
+  if (!(await secAuth('editRequests', document.getElementById('editRequestsPasswordInput').value, document.getElementById('editRequestsPasswordError')))) return;
   const val = document.getElementById('editRequestsPasswordInput').value;
   const err = document.getElementById('editRequestsPasswordError');
   if (val === sectionPasswords.editRequests) {
@@ -5072,7 +5098,8 @@ function renderWasteAdminGate() {
 let wasteAdminAccessLevel = 'full';
 let currentWasteOperationUser = null;
 
-function unlockWasteAdmin() {
+async function unlockWasteAdmin() {
+  if (!(await secAuth('wasteAdmin', document.getElementById('wasteAdminPasswordInput').value, document.getElementById('wasteAdminPasswordError')))) return;
   const val = document.getElementById('wasteAdminPasswordInput').value;
   const err = document.getElementById('wasteAdminPasswordError');
   if (val === sectionPasswords.wasteAdmin) {
@@ -5093,11 +5120,11 @@ function populateWasteOperationUserSelect() {
   sel.innerHTML = operationUsers.map(u => `<option value="${u.username}">${u.username}</option>`).join('') || '<option value="">لا يوجد مستخدمين Operation</option>';
 }
 
-function unlockWasteOperation() {
+async function unlockWasteOperation() {
   const username = document.getElementById('wasteOperationUsername').value;
   const password = document.getElementById('wasteOperationPasswordInput').value;
   const err = document.getElementById('wasteOperationPasswordError');
-  const user = operationUsers.find(u => u.username === username && u.password === password);
+  let user = null; try { const r = await serverLogin({ kind: 'op', username, password }); if (r && r.success) user = r.user; } catch (e) { alert(e.message || 'تعذر الاتصال بالسيرفر'); return; }
   if (!user || !(user.branches && user.branches.length > 0)) { err.style.display = 'block'; return; }
   err.style.display = 'none';
   wasteAdminAccessLevel = 'operation';
@@ -5458,7 +5485,8 @@ function renderTransfersAdminGate() {
   }
 }
 
-function unlockTransfersAdmin() {
+async function unlockTransfersAdmin() {
+  if (!(await secAuth('transfersAdmin', document.getElementById('transfersAdminPasswordInput').value, document.getElementById('transfersAdminPasswordError')))) return;
   const val = document.getElementById('transfersAdminPasswordInput').value;
   const err = document.getElementById('transfersAdminPasswordError');
   if (val === sectionPasswords.transfersAdmin) {
@@ -5773,7 +5801,8 @@ let lastFactoryOrdersData = {}; // key -> order payload
 let currentFactoryOrderDetailKey = null;
 let factoryOrdersSubTab = 'overview';
 
-function unlockFactoryOrdersAdmin() {
+async function unlockFactoryOrdersAdmin() {
+  if (!(await secAuth('factoryOrdersAdmin', document.getElementById('factoryOrdersAdminPasswordInput').value, document.getElementById('factoryOrdersAdminPasswordError')))) return;
   const val = document.getElementById('factoryOrdersAdminPasswordInput').value;
   const err = document.getElementById('factoryOrdersAdminPasswordError');
   if (val === sectionPasswords.factoryOrdersAdmin) {
@@ -6484,7 +6513,8 @@ async function addCategory() {
   }
 }
 
-function unlockManage() {
+async function unlockManage() {
+  if (!(await secAuth('manage', document.getElementById('managePasswordInput').value, document.getElementById('managePasswordError')))) return;
   const val = document.getElementById('managePasswordInput').value;
   const err = document.getElementById('managePasswordError');
   if (val === sectionPasswords.manage) {
@@ -6752,7 +6782,8 @@ function renderAdminGate() {
   }
 }
 
-function unlockAdmin() {
+async function unlockAdmin() {
+  if (!(await secAuth('admin', document.getElementById('adminPasswordInput').value, document.getElementById('adminPasswordError')))) return;
   const val = document.getElementById('adminPasswordInput').value;
   const err = document.getElementById('adminPasswordError');
   if (val === sectionPasswords.admin) {
@@ -6773,11 +6804,11 @@ function populateOperationUserSelect() {
   sel.innerHTML = operationUsers.map(u => `<option value="${u.username}">${u.username}</option>`).join('') || '<option value="">لا يوجد مستخدمين Operation</option>';
 }
 
-function unlockOperation() {
+async function unlockOperation() {
   const username = document.getElementById('operationUsername').value;
   const password = document.getElementById('operationPasswordInput').value;
   const err = document.getElementById('operationPasswordError');
-  const user = operationUsers.find(u => u.username === username && u.password === password);
+  let user = null; try { const r = await serverLogin({ kind: 'op', username, password }); if (r && r.success) user = r.user; } catch (e) { alert(e.message || 'تعذر الاتصال بالسيرفر'); return; }
   if (!user || !(user.branches && user.branches.length > 0)) { err.style.display = 'block'; return; }
   err.style.display = 'none';
   adminAccessLevel = 'operation';
