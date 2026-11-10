@@ -1338,10 +1338,12 @@ async function secAuth(section, password, errEl) {
   try { const r = await serverLogin({ kind: 'sec', section, password }); if (!r.success) { if (errEl) errEl.style.display = 'block'; return false; } }
   catch (e) { alert(e.message || 'تعذر الاتصال بالسيرفر'); return false; }
   try { await Promise.all([loadSettings(), loadUsers(), loadOperationUsers()]); } catch (e) {}
+  // السيرفر هو اللي أكّد كلمة السر — نخلي المقارنة المحلية تعدّي حتى لو الشاشة مالهاش كلمة سر محفوظة
+  if (section === 'settings') currentAdminPassword = password; else sectionPasswords[section] = password;
   return true;
 }
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '10-11 · 15:20'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '10-11 · 17:10'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = ""; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = {};
 let operationUsers = []; // [{ username, password, branches: [] }]
