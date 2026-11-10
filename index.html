@@ -1341,7 +1341,7 @@ async function secAuth(section, password, errEl) {
   return true;
 }
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '10-11 · 14:30'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '10-11 · 15:20'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = ""; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = {};
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -4073,6 +4073,15 @@ async function loadReceiveFactoryOrderCard() {
     if (mark || markUnknown) {
       submitBtn.style.display = 'none';
       wrap.querySelectorAll('input[id^="receiveQty"]').forEach(x => { x.disabled = true; });
+      // التقرير اتبعت: نعرض اللي الفرع بلّغ إنه استلمه فعلًا (من بلاغ الفروق) بدل الكمية المرسلة
+      if (mark) { try {
+        const ir = await gsGet('inv_factory_order_shortage:index'); const idx = (ir && ir.value) ? JSON.parse(ir.value) : [];
+        const mine = idx.filter(r => r.branch === currentUser.branch && r.date === date);
+        const got = {};
+        for (const r of mine) { try { const dr = await gsGet(`inv_factory_order_shortage:${r.id}`); const rep = dr && dr.value ? JSON.parse(dr.value) : null; (rep && rep.items || []).forEach(x => { got[String(x.name || '').trim()] = { q: +x.receivedQty || 0, st: r.status }; }); } catch (e2) {} }
+        items.forEach((it, i) => { const g = got[String(it.name || '').trim()]; if (!g) return; const inp = document.getElementById('receiveQty' + i); if (inp) inp.value = g.q; updateReceiveStatus(i, receiveSentQty(it));
+          const st = document.getElementById('receiveStatus' + i); if (st) st.insertAdjacentHTML('beforeend', `<div class="muted" style="font-size:11.5px">${g.st === 'resolved' ? 'بلاغ اتحل ✓' : g.st === 'rejected' ? 'بلاغ اترفض' : 'بلاغ قيد المراجعة'}</div>`); });
+      } catch (e) {} }
       if (markUnknown) wrap.insertAdjacentHTML('afterbegin', '<div class="toast err" style="margin-bottom:8px">تعذر التأكد إذا كان تقرير الاستلام اتبعت قبل كده — دوس «تحميل» تاني.</div>');
       else wrap.insertAdjacentHTML('afterbegin', `<div style="background:#EEF5EE;border:1px solid #BFDABF;color:#245E24;border-radius:10px;padding:9px 12px;margin-bottom:8px;font-size:13.5px">🔒 تقرير الاستلام لليوم ده اتبعت ${mark.at ? new Date(mark.at).toLocaleString('ar-EG') : ''}${mark.by ? ' بواسطة ' + mark.by : ''} — ${mark.result === 'ok' ? 'كامل' : 'فيه فروق اتبلّغت'}. التقرير بيتبعت مرة واحدة بس، ومينفعش يتبلّغ عن فروق تانية بعده.</div>`);
     }
