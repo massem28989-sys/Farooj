@@ -1335,15 +1335,20 @@ async function serverLogin(params) {
 }
 // شاشات الإدارة: كلمة السر بتتأكد على السيرفر الأول، وبعدين بنحمّل الإعدادات الحقيقية
 async function secAuth(section, password, errEl) {
+  // علامة «جاري الدخول…» على الزرار عشان محدش يدوس تاني وهو مستني
+  const btn = errEl && errEl.parentElement ? errEl.parentElement.querySelector('button') : null; const bt = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'جاري الدخول…'; } if (errEl) errEl.style.display = 'none';
   try { const r = await serverLogin({ kind: 'sec', section, password }); if (!r.success) { if (errEl) errEl.style.display = 'block'; return false; } }
   catch (e) { alert(e.message || 'تعذر الاتصال بالسيرفر'); return false; }
-  try { await Promise.all([loadSettings(), loadUsers(), loadOperationUsers()]); } catch (e) {}
+  finally { if (btn) { btn.disabled = false; btn.textContent = bt; } }
+  // الإعدادات والمستخدمين بيتحملوا في الخلفية — الشاشة بتفتح على طول
+  Promise.all([loadSettings(), loadUsers(), loadOperationUsers()]).then(() => { if (section === 'settings') currentAdminPassword = password; else sectionPasswords[section] = password; }).catch(() => {});
   // السيرفر هو اللي أكّد كلمة السر — نخلي المقارنة المحلية تعدّي حتى لو الشاشة مالهاش كلمة سر محفوظة
   if (section === 'settings') currentAdminPassword = password; else sectionPasswords[section] = password;
   return true;
 }
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '10-11 · 17:10'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '12-11 · 16:50'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = ""; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = {};
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -4546,6 +4551,38 @@ function renderFactoryOrderItems() {
   }
 }
 
+// أصناف أساسية لكل الفروع (من الإدارة) — الصنف بيتحسب موجود لو أي صنف في الطلبية اسمه فيه الكلمة دي
+// (يعني «صوص وردى» بيقبل «صوص وردي» و«صوص وردي دبي»)
+const MANDATORY_ITEMS = ['مسحب','طاووق','كباب لحم','كباب دجاج','فروج بالعظم','فروج مخلى','جوانح ابو العبد','ريش ابو العبد','جوانح فرن',
+  'صوص سطل احمر مع ذره','صوص سطل ابيض مع ذره','صوص طحينه','صوص حريقه','صوص وردى','صوص ثوم','صوص سبايسى','بيواز'];
+const essNorm = t => String(t || '').toLowerCase().replace(/[ىي]/g, 'ي').replace(/[ةه]/g, 'ه').replace(/[أإآ]/g, 'ا').replace(/\s+/g, ' ').trim();
+const essMatch = (kw, name) => { const n = essNorm(name), k = essNorm(kw); if (!n.includes(k)) return false;
+  // «طاووق» ما يتطابقش مع «صوص طاووق»
+  if (!k.startsWith('صوص') && /صوص/.test(n) && !/صوص/.test(k)) return false; return true; };
+const _essCache = {};
+async function branchEssentials(branch, date) {
+  const k = branch + '|' + date; if (_essCache[k]) return _essCache[k];
+  const d0 = new Date(date + 'T00:00:00'); const days = [];
+  for (let i = 1; i <= 14; i++) { const d = new Date(d0); d.setDate(d.getDate() - i); days.push(formatLocalDate(d)); }
+  const slug = slugify(branch);
+  const res = await Promise.all(days.map(d => gsGet(`inv_factory_order:${d}:${slug}`).catch(() => null)));
+  const orders = res.map(r => { try { return r && r.value ? JSON.parse(r.value) : null; } catch (e) { return null; } }).filter(o => o && Array.isArray(o.items) && o.items.length);
+  const cnt = new Map();
+  orders.forEach(o => { const seen = new Set(); o.items.forEach(r => { if (!r || !r.name || seen.has(r.name)) return; seen.add(r.name);
+    const x = cnt.get(r.name) || { name: r.name, unit: r.unit || '', n: 0, qs: [] }; x.n++; x.qs.push(+r.qty || 0); cnt.set(r.name, x); }); });
+  const names = new Set(inventoryItems.map(it => it.name));
+  const med = x => { const q = x.qs.slice().sort((a, b) => a - b); return q[Math.floor(q.length / 2)]; };
+  const out = orders.length < 5 ? [] : [...cnt.values()].filter(x => x.n / orders.length >= 0.7 && names.has(x.name))
+    .map(x => ({ name: x.name, unit: x.unit, qty: med(x), test: n => n === x.name }));
+  // الأساسي لكل الفروع: لو مش متغطي بصنف من التلقائي، بنضيفه — بالكمية والاسم اللي الفرع ده متعود عليه لو موجود
+  MANDATORY_ITEMS.forEach(kw => { if (!inventoryItems.some(it => essMatch(kw, it.name))) return; if (out.some(e => essMatch(kw, e.name))) return;
+    const hist = [...cnt.values()].filter(x => essMatch(kw, x.name)).sort((a, b) => b.n - a.n)[0];
+    out.push({ name: hist ? hist.name : kw, unit: hist ? hist.unit : '', qty: hist ? med(hist) : null, test: n => essMatch(kw, n), must: true }); });
+  // صنف تلقائي أساسي يتقبل كمان أي صنف بنفس الكلمة الأساسية (مثلاً اتطلب «وردي» عادي بدل «وردي دبي»)
+  out.forEach(e => { if (e.must) return; const kw = MANDATORY_ITEMS.find(m => essMatch(m, e.name)); if (kw) { const t = e.test; e.test = n => t(n) || essMatch(kw, n); } });
+  return (_essCache[k] = out);
+}
+
 async function submitFactoryOrder() {
   if (!currentUser) return;
   const branch = currentUser.branch;
@@ -4553,6 +4590,21 @@ async function submitFactoryOrder() {
   const btn = document.getElementById('submitFactoryOrderBtn');
 
   if (currentFactoryOrderItems.length === 0) { toast.innerHTML = '<div class="toast err">مفيش أصناف مضافة للطلبية.</div>'; return; }
+
+  // 🧾 أصناف أساسية: أي صنف الفرع ده طلبه في 70% أو أكتر من طلبياته آخر 14 يوم — لو مش في القايمة نسأله قبل الإرسال
+  let skippedEss = [];
+  try {
+    btn.disabled = true; btn.textContent = 'بيراجع الطلبية...';
+    const ess = await branchEssentials(branch, orderDayStr());
+    const miss = ess.filter(e => !currentFactoryOrderItems.some(r => e.test(r.name)));
+    btn.disabled = false; btn.textContent = 'إرسال طلبية المصنع';
+    if (miss.length) {
+      const txt = miss.slice(0, 14).map(e => `• ${e.name}${e.qty != null ? ` (عادةً ${e.qty} ${e.unit})` : ''}`).join('\n');
+      if (!confirm(`⚠ ناسي أصناف أساسية؟\n\nالأصناف الأساسية دي مش في الطلبية:\n${txt}${miss.length > 14 ? `\n… و${miss.length - 14} كمان` : ''}\n\n• «إلغاء» ← ترجع تضيفهم\n• «موافق» ← تبعت الطلبية من غيرهم (مش محتاجينهم النهارده)`)) {
+        toast.innerHTML = `<div class="toast err">ضيف الأصناف الأساسية الناقصة (${miss.map(e => e.name).slice(0, 4).join('، ')}${miss.length > 4 ? '…' : ''}) وبعدين ابعت.</div>`; return; }
+      skippedEss = miss.map(e => e.name);
+    }
+  } catch (e) { btn.disabled = false; btn.textContent = 'إرسال طلبية المصنع'; }
 
   // تأكيد أخير واضح — عشان محدش يبعت طلبية للمصنع وهو قاصد يسجّل تالف بالغلط
   const previewList = currentFactoryOrderItems.slice(0, 5).map(r => `• ${r.name}: ${r.qty}`).join('\n');
@@ -4566,8 +4618,24 @@ async function submitFactoryOrder() {
   try {
     const existing = await gsGet(key);
     if (existing && existing.value) {
-      toast.innerHTML = `<div class="toast err">طلبية "${branch}" ليوم ${date} اتبعتت قبل كده، مينفعش تبعتها تاني عشان الأولى ميتمسحش.</div>`;
+      // الطلبية اتبعتت قبل كده (غالبًا من موظف تاني) — بدل ما الأصناف دي تضيع، نعرض نبعتها للمصنع كإضافة (طلب تعديل)
+      let prev = []; try { prev = (JSON.parse(existing.value).items) || []; } catch (e) {}
+      const has = new Map(prev.map(r => [r.name, +r.qty || 0]));
+      const add = currentFactoryOrderItems.filter(r => !has.has(r.name) || Math.abs((has.get(r.name) || 0) - (+r.qty || 0)) > 1e-9);
       btn.disabled = false; btn.textContent = 'إرسال طلبية المصنع';
+      if (!add.length) { toast.innerHTML = `<div class="toast ok">طلبية "${branch}" ليوم ${date} اتبعتت قبل كده وفيها نفس الأصناف دي ✓ — مش محتاج تبعت تاني.</div>`; return; }
+      const lines = add.map(r => has.has(r.name) ? `• ${r.name}: ${r.qty} ${r.unit} (كانت ${has.get(r.name)})` : `• ${r.name}: ${r.qty} ${r.unit}`);
+      if (!confirm(`⚠ طلبية "${branch}" ليوم ${date} اتبعتت قبل كده (${prev.length} صنف).\n\nالأصناف دي مش فيها أو كميتها مختلفة:\n${lines.slice(0, 12).join('\n')}${lines.length > 12 ? `\n… و${lines.length - 12} كمان` : ''}\n\nتبعتها للمصنع كـ«إضافة على الطلبية»؟ (هتظهر للمصنع في طلبات التعديل)`)) {
+        toast.innerHTML = `<div class="toast err">طلبية "${branch}" ليوم ${date} اتبعتت قبل كده — الأصناف اللي في القايمة دي <b>ما اتبعتتش</b>.</div>`; return; }
+      const noteEl = document.getElementById('factoryOrderChangeNote');
+      if (!noteEl) { toast.innerHTML = '<div class="toast err">ابعت الأصناف دي من «طلب تعديل على الطلبية».</div>'; return; }
+      noteEl.value = 'إضافة على الطلبية:\n' + lines.join('\n');
+      await submitFactoryOrderChangeRequest();
+      const hint = document.getElementById('factoryOrderChangeHint');
+      if (hint && /✓/.test(hint.textContent)) {
+        toast.innerHTML = `<div class="toast ok">اتبعتت ${add.length} صنف للمصنع كإضافة على طلبية ${date} ✓ — هتتضاف لما المصنع يوافق.</div>`;
+        currentFactoryOrderItems = []; renderFactoryOrderItems(); renderFactoryOrderItemPicker();
+      } else toast.innerHTML = '<div class="toast err">ما اتبعتتش — جرّب تاني أو ابعتها من «طلب تعديل».</div>';
       return;
     }
   } catch (e) {
@@ -4577,7 +4645,7 @@ async function submitFactoryOrder() {
   }
 
   btn.textContent = 'جاري الإرسال...';
-  const payload = { branch, date, items: currentFactoryOrderItems, submittedAt: new Date().toISOString() };
+  const payload = { branch, date, items: currentFactoryOrderItems, submittedAt: new Date().toISOString(), ...(skippedEss.length ? { skippedEssentials: skippedEss } : {}) };
 
   try {
     let result = await gsSet(key, JSON.stringify(payload));
