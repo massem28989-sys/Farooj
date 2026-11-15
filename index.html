@@ -1348,7 +1348,7 @@ async function secAuth(section, password, errEl) {
   return true;
 }
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '12-11 · 16:50'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '12-11 · 17:05'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = ""; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = {};
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -4559,6 +4559,20 @@ const essNorm = t => String(t || '').toLowerCase().replace(/[ىي]/g, 'ي').repl
 const essMatch = (kw, name) => { const n = essNorm(name), k = essNorm(kw); if (!n.includes(k)) return false;
   // «طاووق» ما يتطابقش مع «صوص طاووق»
   if (!k.startsWith('صوص') && /صوص/.test(n) && !/صوص/.test(k)) return false; return true; };
+// نافذة اختيار بزرارين بالعربي (بدل confirm بتاع المتصفح اللي زراريه OK/Cancel بالإنجليزي على أغلب الموبايلات)
+function brChoice(title, html, yes, no) {
+  return new Promise(res => {
+    const w = document.createElement('div');
+    w.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;direction:rtl';
+    w.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:18px 18px 14px;box-shadow:0 10px 30px rgba(0,0,0,.3);max-height:90vh;overflow:auto">
+      <div style="font-weight:700;font-size:17px;color:#8E1A20;margin-bottom:10px">${title}</div><div style="font-size:14.5px;line-height:1.8;color:#222">${html}</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px">
+        <button type="button" data-v="0" style="padding:12px;border-radius:10px;border:0;background:#8E1A20;color:#fff;font-weight:700;font-size:15px;font-family:inherit">${no}</button>
+        <button type="button" data-v="1" style="padding:11px;border-radius:10px;border:1px solid #d9cfcd;background:#fff;color:#444;font-size:14px;font-family:inherit">${yes}</button></div></div>`;
+    w.querySelectorAll('button').forEach(b => b.onclick = () => { w.remove(); res(b.dataset.v === '1'); });
+    document.body.appendChild(w);
+  });
+}
 const _essCache = {};
 async function branchEssentials(branch, date) {
   const k = branch + '|' + date; if (_essCache[k]) return _essCache[k];
@@ -4599,8 +4613,10 @@ async function submitFactoryOrder() {
     const miss = ess.filter(e => !currentFactoryOrderItems.some(r => e.test(r.name)));
     btn.disabled = false; btn.textContent = 'إرسال طلبية المصنع';
     if (miss.length) {
-      const txt = miss.slice(0, 14).map(e => `• ${e.name}${e.qty != null ? ` (عادةً ${e.qty} ${e.unit})` : ''}`).join('\n');
-      if (!confirm(`⚠ ناسي أصناف أساسية؟\n\nالأصناف الأساسية دي مش في الطلبية:\n${txt}${miss.length > 14 ? `\n… و${miss.length - 14} كمان` : ''}\n\n• «إلغاء» ← ترجع تضيفهم\n• «موافق» ← تبعت الطلبية من غيرهم (مش محتاجينهم النهارده)`)) {
+      const esc2 = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      const lis = miss.map(e => `<li style="margin:3px 0"><b>${esc2(e.name)}</b>${e.qty != null ? ` <span style="color:#777">— عادةً ${e.qty} ${esc2(e.unit)}</span>` : ''}</li>`).join('');
+      const send = await brChoice('⚠ ناسي أصناف أساسية؟', `الأصناف الأساسية دي <b>مش في الطلبية</b>:<ul style="margin:8px 0 4px;padding-inline-start:20px">${lis}</ul>`, 'ابعت الطلبية من غيرهم (مش محتاجينهم النهارده)', '↩ ارجع أضيفهم');
+      if (!send) {
         toast.innerHTML = `<div class="toast err">ضيف الأصناف الأساسية الناقصة (${miss.map(e => e.name).slice(0, 4).join('، ')}${miss.length > 4 ? '…' : ''}) وبعدين ابعت.</div>`; return; }
       skippedEss = miss.map(e => e.name);
     }
