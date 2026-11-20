@@ -1348,7 +1348,7 @@ async function secAuth(section, password, errEl) {
   return true;
 }
 const APP_VERSION = '2026-10-26';
-window.__BUILD__ = '12-11 · 17:05'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
+window.__BUILD__ = '21-11 · 03:40'; try{ document.addEventListener('DOMContentLoaded',()=>{ const e=document.getElementById('brBuild'); if(e) e.textContent='نسخة '+window.__BUILD__; }); }catch(e){} // بيتسجل مع كل جرد عشان نعرف لو جهاز شغال على نسخة قديمة
 let currentAdminPassword = ""; // كلمة سر شاشة الإعدادات نفسها (وتستخدم كافتراضي لباقي الشاشات لو لسه ملهاش باسورد خاص)
 let sectionPasswords = {};
 let operationUsers = []; // [{ username, password, branches: [] }]
@@ -4050,7 +4050,9 @@ async function loadReceiveFactoryOrderCard() {
     const priced = items.some(it => it.price != null);
     const fmtMoney = v => (Math.round((+v || 0) * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
     let total = 0;
-    let html = priced ? '<p class="muted" style="margin:0 0 8px;">💰 الأسعار دي بسعر تكلفة المصنع وقت الصرف — وأسعار الأصناف في الكتالوج عندك هتتحدث بيها لما تأكد الاستلام.</p>' : '';
+    let html = `<div style="background:#EEF5FF;border:1px solid #B7CDEB;color:#1F3F66;border-radius:10px;padding:9px 12px;margin:0 0 10px;font-size:14px;line-height:1.7">📦 اكتب <b>اللي وصلك من المصنع في الطلبية دي</b> — <b>مش الموجود عندك دلوقتي</b>. الأرقام مكتوبة باللي اتبعت: لو كله وصل كامل ما تغيّرش حاجة ودوس «إرسال تقرير الاستلام». غيّر بس الصنف اللي وصل ناقص أو زيادة.
+      <div style="margin-top:6px"><button type="button" class="ghost" style="padding:5px 12px;font-size:13px" onclick="resetReceiveQtys()">↺ رجّع الأرقام زي ما اتبعتت</button></div></div>`;
+    html += priced ? '<p class="muted" style="margin:0 0 8px;">💰 الأسعار دي بسعر تكلفة المصنع وقت الصرف — وأسعار الأصناف في الكتالوج عندك هتتحدث بيها لما تأكد الاستلام.</p>' : '';
     html += '<div class="table-scroll"><table><thead><tr><th>الصنف</th><th>مرسل حسب الفاتورة</th>' + (priced ? '<th>سعر الوحدة</th><th>القيمة</th>' : '') + '<th>استلمت فعليًا</th><th>الحالة</th></tr></thead><tbody>';
     items.forEach((it, i) => {
       const sent = receiveSentQty(it);
@@ -4153,6 +4155,7 @@ async function saveReceiptMark(date, result, nShort, nSurplus) {
 // طلبية النهارده نفسها: تنبيه بس (البضاعة ممكن تكون لسه في الطريق).
 const RECEIPT_ENFORCE_FROM = '2026-11-01';
 const RECEIPT_LOOKBACK_DAYS = 5;
+const RECEIPT_LOCK_HOUR = 20; // طلبية النهارده: آخر توصيل 7 بالليل — من 8 بالليل الشاشات بتتقفل لحد ما الفرع يأكد الاستلام
 let PENDING_RECEIPTS = { block: [], today: null, at: 0, branch: '' };
 function ymdAddDays(ymd, n) { const [y, m, d] = ymd.split('-').map(Number); const x = new Date(y, m - 1, d + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; }
 async function gsGetStrict(key) { // بيفرّق بين «مش موجود» (null) و«ماعرفناش» (throw)
@@ -4178,7 +4181,7 @@ async function checkPendingReceipts(force) {
       if (d === t && !(data.items || []).some(it => it.sent != null)) return; // طلبية النهارده لسه ما اتصرفتش
       let r; try { r = await gsGetStrict(`inv_factory_order_receipt:${d}:${slug}`); } catch (e) { return; } // ماعرفناش ← مانقفلش
       if (r) return;
-      if (d === t) today = d; else block.push(d);
+      if (d === t && new Date().getHours() < RECEIPT_LOCK_HOUR) today = d; else block.push(d);
     }));
     if (!currentUser || currentUser.branch !== br) return PENDING_RECEIPTS;
     PENDING_RECEIPTS = { block: block.sort(), today, at: Date.now(), branch: br };
@@ -4210,9 +4213,10 @@ function renderReceiptEnforcement(currentTab) {
     } else if (ov) ov.remove();
   } else {
     if (ov) ov.remove();
-    bar.innerHTML = (mine && P.today) ? `<div style="background:#FFF4E5;border:1px solid #F0C27B;color:#8A5300;border-radius:10px;padding:9px 12px;margin:0 0 10px;font-size:13.5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">🚚 المصنع صرف طلبية النهارده — أول ما توصل شيّك عليها وأكّد الاستلام. <button class="ghost" style="padding:4px 10px;font-size:12px" onclick="goReceiveDate('${P.today}')">شيّك دلوقتي</button></div>` : '';
+    bar.innerHTML = (mine && P.today) ? `<div style="background:#FFF4E5;border:1px solid #F0C27B;color:#8A5300;border-radius:10px;padding:9px 12px;margin:0 0 10px;font-size:13.5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">🚚 المصنع صرف طلبية النهارده — أول ما توصل شيّك عليها وأكّد الاستلام. <b>الساعة ${RECEIPT_LOCK_HOUR > 12 ? RECEIPT_LOCK_HOUR - 12 : RECEIPT_LOCK_HOUR} بالليل الشاشات هتتقفل</b> لو ما أكّدتش. <button class="ghost" style="padding:4px 10px;font-size:12px" onclick="goReceiveDate('${P.today}')">شيّك دلوقتي</button></div>` : '';
   }
 }
+function resetReceiveQtys() { const items = (currentReceiveOrderData && currentReceiveOrderData.items) || []; items.forEach((it, i) => { const el = document.getElementById(`receiveQty${i}`); if (el) { el.value = receiveSentQty(it); updateReceiveStatus(i, receiveSentQty(it)); } }); }
 function goReceiveDate(d) {
   const el = document.getElementById('receiveFactoryOrderDate'); if (el) el.value = d;
   const ov = document.getElementById('receiptEnforceOverlay'); if (ov) ov.remove();
@@ -4262,6 +4266,20 @@ async function submitFactoryReceiptCheck() {
     }
   });
 
+  // 🛑 حماية من «جرد اتكتب في شاشة الاستلام»: لو أسطر كتير اتغيرت أو فيه أرقام بعيدة جدًا عن المبعوت — نوقّفه ونسأله
+  { const changed = diffs.length, total = items.length || 1;
+    const wild = diffs.filter(x => { const s0 = +x.sentQty || 0, r0 = +x.receivedQty || 0; return (r0 > s0 * 2 + 1) || (s0 > 0 && r0 < s0 * 0.4 && s0 - r0 >= 1); });
+    if (changed >= 5 && changed / total >= 0.35 || wild.length >= 3) {
+      const esc3 = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      const list = (wild.length ? wild : diffs).slice(0, 6).map(x => `<li><b>${esc3(x.name)}</b>: اتبعتلك <b>${x.sentQty}</b> وانت كاتب <b style="color:#A32D2D">${x.receivedQty}</b></li>`).join('');
+      const really = await brChoice('🛑 الأرقام دي شكلها جرد مش استلام',
+        `انت غيّرت <b>${changed} صنف من ${total}</b>، وفيه أرقام بعيدة جدًا عن اللي المصنع بعته:<ul style="margin:8px 0;padding-inline-start:20px">${list}</ul>
+         الشاشة دي بتتكتب فيها <b>الكمية اللي وصلتك من المصنع في طلبية ${date.split('-').reverse().slice(0,2).join('/')}</b> — <b>مش الموجود عندك دلوقتي</b>.<br>
+         لو كل حاجة وصلت كاملة: ارجع ودوس <b>«رجّع الأرقام زي ما اتبعتت»</b> وابعت.`,
+        'أيوه، دي الكميات اللي وصلت فعلًا', 'ارجع أراجع الأرقام');
+      if (!really) { toast.innerHTML = '<div class="toast err">راجع الأرقام: اكتب اللي <b>وصل من المصنع</b> بس. لو كله وصل كامل دوس «رجّع الأرقام زي ما اتبعتت».</div>'; return; }
+    }
+  }
   { const nS = diffs.filter(x => x.type === 'shortage').length, nP = diffs.filter(x => x.type === 'surplus').length;
     const sum = diffs.length ? `فيه ${nS ? nS + ' صنف ناقص' : ''}${nS && nP ? ' و' : ''}${nP ? nP + ' صنف زيادة' : ''}:\n${diffs.slice(0, 8).map(x => `• ${x.name}: ${x.type === 'shortage' ? 'ناقص ' + x.missingQty : 'زيادة ' + x.extraQty}`).join('\n')}${diffs.length > 8 ? '\n…' : ''}` : 'كل الأصناف وصلت كاملة.';
     if (!confirm(`⚠️ تقرير الاستلام بيتبعت مرة واحدة بس.\nبعد الإرسال مش هتقدر تعدّله ولا تبلّغ عن أي فرق تاني لليوم ده.\n\n${sum}\n\nاتأكد إنك عدّيت كل حاجة. تبعت؟`)) return; }
